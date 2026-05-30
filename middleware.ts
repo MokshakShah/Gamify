@@ -10,9 +10,17 @@ export default authMiddleware({
     "/sign-in(.*)",
     "/sign-up(.*)",
     "/disposable-email-blocked(.*)",
+    "/api/webhooks/clerk",
   ],
   async afterAuth(auth, req) {
-    if (!auth.userId) return;
+    if (!auth.userId) {
+      if (req.nextUrl.pathname.startsWith("/dashboard")) {
+        const origin =
+          req.experimental_clerkUrl?.origin ?? req.nextUrl.origin;
+        return NextResponse.redirect(new URL("/", origin));
+      }
+      return;
+    }
 
     if (req.nextUrl.pathname.startsWith("/disposable-email-blocked")) {
       return;
