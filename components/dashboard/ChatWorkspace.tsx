@@ -41,6 +41,12 @@ interface ChatThread {
   updatedAt: string;
 }
 
+type PendingAttachment = {
+  id: string;
+  fileName: string;
+  url: string;
+};
+
 
 function cachedToMessage(m: CachedChatMessage): ChatMessage {
   return { id: m.id, role: m.role, content: m.content };
@@ -74,7 +80,12 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [pendingChatId, setPendingChatId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatThread | null>(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const listLoadedRef = useRef(false);
 
@@ -353,7 +364,9 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
   const send = async () => {
     const trimmed = input.trim();
-    if (!trimmed || !userId || sending) return;
+    if ((!trimmed && pendingAttachments.length === 0) || !userId || sending) {
+      return;
+    }
 
     setSending(true);
     let chatId = resolvedChatId;
@@ -369,15 +382,27 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
       threadTitle = created.title;
     }
 
+    const attachmentLines = pendingAttachments.map(
+      (att) => `- [${att.fileName}](${att.url})`
+    );
+    const attachmentBlock = attachmentLines.length
+      ? `Attachments:\n${attachmentLines.join('\n')}`
+      : '';
+    const combinedContent = trimmed
+      ? attachmentBlock
+        ? `${trimmed}\n\n${attachmentBlock}`
+        : trimmed
+      : attachmentBlock;
+    const titleSeed = trimmed || pendingAttachments[0]?.fileName || 'New chat';
     const title =
       threadTitle === 'New chat'
-        ? trimmed.slice(0, 42) + (trimmed.length > 42 ? '…' : '')
+        ? titleSeed.slice(0, 42) + (titleSeed.length > 42 ? '…' : '')
         : threadTitle;
 
     const optimisticUser: ChatMessage = {
       id: `tmp-${Date.now()}`,
       role: 'user',
-      content: trimmed,
+      content: combinedContent,
     };
 
     const optimisticAssistant: ChatMessage = {
@@ -399,7 +424,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            content: trimmed,
+            content: combinedContent,
             title,
             context: readDeepDiveContext(userId, chatId),
           }),
@@ -418,6 +443,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         title?: string;
         updatedAt?: string;
       } | null = null;
+      const attachmentsSnapshot = pendingAttachments;
       let typingTimer: ReturnType<typeof setInterval> | null = null;
 
       const updateAssistant = (nextText: string) => {
@@ -458,6 +484,9 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           chatId,
           updatedAt: donePayload.updatedAt ?? new Date().toISOString(),
         });
+        if (attachmentsSnapshot.length > 0) {
+          setPendingAttachments([]);
+        }
         if (donePayload.title && donePayload.updatedAt) {
           setThreads((prev) =>
             prev.map((t) =>
@@ -546,6 +575,82 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
       if (shouldNavigate && chatId) {
         router.push(chatDashboardPath(chatId));
       }
+    }
+  };
+
+  const uploadAttachment = async (file: File) => {
+    if (!userId || uploadingAttachment) return;
+    setUploadingAttachment(true);
+
+    let chatId = resolvedChatId;
+    let threadTitle = active?.title ?? 'New chat';
+
+    if (!chatId) {
+      const created = await ensureThread();
+      if (!created) {
+        setUploadingAttachment(false);
+        return;
+      }
+      chatId = created.chatId;
+      threadTitle = created.title;
+    }
+
+    try {
+      const form = new FormData();
+      form.append('chatId', chatId);
+      form.append('file', file);
+
+      const res = await fetch('/api/chat/attachments', {
+        method: 'POST',
+        body: form,
+      });
+
+      if (res.status === 429) {
+        setToast('Daily attachment limit reached (3/day).');
+        return;
+      }
+
+      if (!res.ok) throw new Error('upload failed');
+
+      const data = (await res.json()) as {
+        attachment: { id: string; url: string; fileName: string };
+      };
+
+      setPendingAttachments((prev) => [
+        ...prev,
+        {
+          id: data.attachment.id,
+          url: data.attachment.url,
+          fileName: data.attachment.fileName,
+        },
+      ]);
+      if (threadTitle === 'New chat') {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.chatId === chatId
+              ? { ...t, title: file.name, updatedAt: new Date().toISOString() }
+              : t
+          )
+        );
+      }
+    } catch {
+      setToast('Attachment upload failed.');
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  const removePendingAttachment = async (attachment: PendingAttachment) => {
+    setPendingAttachments((prev) =>
+      prev.filter((item) => item.id !== attachment.id)
+    );
+    try {
+      await fetch(
+        `/api/chat/attachments/${encodeURIComponent(attachment.id)}`,
+        { method: 'DELETE' }
+      );
+    } catch {
+      setToast('Failed to remove attachment.');
     }
   };
 
@@ -746,7 +851,36 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                       )}
                     </>
                   ) : (
-                    <p className="whitespace-pre-wrap">{m.content}</p>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({ children, href }) => (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-100 underline"
+                          >
+                            {children}
+                          </a>
+                        ),
+                        p: ({ children }) => (
+                          <p className="mb-2 last:mb-0">{children}</p>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="ml-4 list-disc space-y-1">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="ml-4 list-decimal space-y-1">
+                            {children}
+                          </ol>
+                        ),
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
                   )}
                 </div>
               </div>
@@ -762,24 +896,66 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
               void send();
             }}
           >
-            <textarea
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = '';
+                if (file) void uploadAttachment(file);
               }}
-              placeholder="Ask anything…"
-              disabled={sending}
-              className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent py-2 text-sm outline-none placeholder:text-slate-400 disabled:opacity-50"
-              aria-label="Message"
             />
             <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingAttachment || sending}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              aria-label="Attach file"
+              title="Attach file"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              {pendingAttachments.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {pendingAttachments.map((att) => (
+                    <span
+                      key={att.id}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700"
+                    >
+                      {att.fileName}
+                      <button
+                        type="button"
+                        onClick={() => void removePendingAttachment(att)}
+                        className="text-slate-400 hover:text-slate-600"
+                        aria-label={`Remove ${att.fileName}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <textarea
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder="Ask anything…"
+                disabled={sending}
+                className="max-h-32 min-h-[2.5rem] w-full resize-none border-0 bg-transparent py-2 text-sm outline-none placeholder:text-slate-400 disabled:opacity-50"
+                aria-label="Message"
+              />
+            </div>
+            <button
               type="submit"
-              disabled={!input.trim() || sending}
+              disabled={(!input.trim() && pendingAttachments.length === 0) || sending || uploadingAttachment}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
               aria-label="Send"
             >
