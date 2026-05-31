@@ -36,6 +36,12 @@ import { cleanYoutubeTitle } from '@/lib/youtube/clean-title';
 import { cn } from '@/lib/utils';
 import { writeDeepDiveContext } from '@/lib/chat/deep-dive-context';
 import { chatDashboardPath } from '@/lib/chat/urls';
+import { appendMessageToCache } from '@/lib/chat/client-cache';
+import {
+  clearDeepDiveThreadId,
+  getDeepDiveThreadId,
+  setDeepDiveThreadId,
+} from '@/lib/chat/deep-dive-thread-map';
 
 export type YoutubeSummaryMeta = {
   id: string;
@@ -402,22 +408,83 @@ export function UploadWorkspace({ urlSummaryId }: UploadWorkspaceProps) {
 
   const startDeepDive = async () => {
     if (!userId || !selectedDetail?.summary) return;
+    const topic = extractSummaryTopic(
+      selectedDetail.summary,
+      cleanYoutubeTitle(selectedDetail.title)
+    );
+    const summaryText = summaryToPlainText(selectedDetail.summary);
+    const header = selectedDetail.channelName
+      ? `${selectedDetail.title} · ${selectedDetail.channelName}`
+      : selectedDetail.title;
+    const seedMessage = `Deep dive topic: ${topic}\n${header}\n${selectedDetail.sourceUrl}\n\nSummary:\n${summaryText}`;
     try {
+      const existingChatId = getDeepDiveThreadId(userId, selectedDetail.id);
+      if (existingChatId) {
+        const check = await fetch(
+          `/api/chat/threads/${encodeURIComponent(existingChatId)}`
+        );
+        if (check.ok) {
+          writeDeepDiveContext(userId, existingChatId, {
+            summaryId: selectedDetail.id,
+            topic,
+            title: selectedDetail.title,
+            channelName: selectedDetail.channelName,
+            sourceUrl: selectedDetail.sourceUrl,
+            summary: summaryText,
+          });
+          router.push(chatDashboardPath(existingChatId));
+          return;
+        }
+        if (check.status === 404) {
+          clearDeepDiveThreadId(userId, selectedDetail.id);
+        } else {
+          setToast('Could not open deep dive. Please try again.');
+          return;
+        }
+      }
+
       const res = await fetch('/api/chat/threads', { method: 'POST' });
       if (!res.ok) throw new Error('chat create failed');
       const data = (await res.json()) as { thread: { chatId: string } };
       const chatId = data.thread.chatId;
+      setDeepDiveThreadId(userId, selectedDetail.id, chatId);
       writeDeepDiveContext(userId, chatId, {
         summaryId: selectedDetail.id,
-        topic: extractSummaryTopic(
-          selectedDetail.summary,
-          cleanYoutubeTitle(selectedDetail.title)
-        ),
+        topic,
         title: selectedDetail.title,
         channelName: selectedDetail.channelName,
         sourceUrl: selectedDetail.sourceUrl,
-        summary: summaryToPlainText(selectedDetail.summary),
+        summary: summaryText,
       });
+      const seedRes = await fetch(
+        `/api/chat/threads/${encodeURIComponent(chatId)}/messages`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: 'assistant',
+            content: seedMessage,
+            title: topic,
+          }),
+        }
+      );
+      if (seedRes.ok) {
+        const seeded = (await seedRes.json()) as {
+          message: {
+            id: string;
+            role: 'assistant';
+            content: string;
+            createdAt: string;
+          };
+          title: string;
+          updatedAt: string;
+        };
+        appendMessageToCache(userId, chatId, seeded.message, {
+          chatId,
+          title: seeded.title,
+          updatedAt: seeded.updatedAt,
+        });
+      }
       router.push(chatDashboardPath(chatId));
     } catch {
       setToast('Could not start deep dive. Please try again.');

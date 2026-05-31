@@ -4,6 +4,8 @@ import { useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, SendHorizontal, Sparkles } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { HistorySidebarRow } from '@/components/dashboard/HistorySidebarRow';
 import { ResizableHistorySidebar } from '@/components/dashboard/ResizableHistorySidebar';
 import {
@@ -16,7 +18,11 @@ import {
   type CachedChatMessage,
   type CachedChatThread,
 } from '@/lib/chat/client-cache';
-import { readDeepDiveContext } from '@/lib/chat/deep-dive-context';
+import {
+  clearDeepDiveContext,
+  readDeepDiveContext,
+} from '@/lib/chat/deep-dive-context';
+import { clearDeepDiveThreadByChatId } from '@/lib/chat/deep-dive-thread-map';
 import { chatDashboardPath, chatShareUrl } from '@/lib/chat/urls';
 import { stripMarkdownForDisplay } from '@/lib/summary/markdown-display';
 import { cn } from '@/lib/utils';
@@ -67,7 +73,9 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [pendingChatId, setPendingChatId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatThread | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
   const listLoadedRef = useRef(false);
 
   const resolvedChatId = urlChatId ?? pendingChatId ?? undefined;
@@ -87,11 +95,19 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
   }, [toast]);
 
   useEffect(() => {
+    if (!autoScroll) return;
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [messages, resolvedChatId]);
+  }, [messages, resolvedChatId, autoScroll]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setAutoScroll(distanceToBottom < 80);
+  };
 
   useEffect(() => {
     if (urlChatId) setPendingChatId(null);
@@ -243,9 +259,10 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
   const deleteChat = async (chatId: string) => {
     if (!userId) return;
-    if (!window.confirm('Delete this chat permanently?')) return;
 
     removeThreadFromCache(userId, chatId);
+    clearDeepDiveThreadByChatId(userId, chatId);
+    clearDeepDiveContext(userId, chatId);
 
     const next = threads.filter((t) => t.chatId !== chatId);
     setThreads(next);
@@ -267,6 +284,22 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
     } catch {
       /* ignore */
     }
+  };
+
+  const requestDeleteChat = (chatId: string) => {
+    const target = threads.find((t) => t.chatId === chatId) ?? {
+      chatId,
+      title: 'Chat',
+      updatedAt: '',
+    };
+    setDeleteTarget(target);
+  };
+
+  const confirmDeleteChat = async () => {
+    if (!deleteTarget) return;
+    const chatId = deleteTarget.chatId;
+    setDeleteTarget(null);
+    await deleteChat(chatId);
   };
 
   const commitRenameChat = async (chatId: string, nextTitle: string) => {
@@ -347,9 +380,15 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
       content: trimmed,
     };
 
+    const optimisticAssistant: ChatMessage = {
+      id: `tmp-assistant-${Date.now()}`,
+      role: 'assistant',
+      content: '',
+    };
+
     setMessagesByChat((prev) => ({
       ...prev,
-      [chatId]: [...(prev[chatId] ?? []), optimisticUser],
+      [chatId]: [...(prev[chatId] ?? []), optimisticUser, optimisticAssistant],
     }));
     setInput('');
 
@@ -366,48 +405,143 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           }),
         }
       );
-      if (!res.ok) throw new Error('save failed');
+      if (!res.ok || !res.body) throw new Error('save failed');
 
-      const data = (await res.json()) as {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let pendingText = '';
+      let displayText = '';
+      let donePayload: {
         userMessage: CachedChatMessage;
         assistantMessage: CachedChatMessage;
-        title: string;
-        updatedAt: string;
+        title?: string;
+        updatedAt?: string;
+      } | null = null;
+      let typingTimer: ReturnType<typeof setInterval> | null = null;
+
+      const updateAssistant = (nextText: string) => {
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [chatId]: (prev[chatId] ?? []).map((m) =>
+            m.id === optimisticAssistant.id ? { ...m, content: nextText } : m
+          ),
+        }));
       };
 
-      const userMsg = cachedToMessage(data.userMessage);
-      const assistantMsg = cachedToMessage(data.assistantMessage);
-      setMessagesByChat((prev) => {
-        const list = (prev[chatId] ?? []).filter(
-          (m) => m.id !== optimisticUser.id
-        );
-        return { ...prev, [chatId]: [...list, userMsg, assistantMsg] };
-      });
+      const stopTyping = () => {
+        if (!typingTimer) return;
+        clearInterval(typingTimer);
+        typingTimer = null;
+      };
 
-      appendMessageToCache(userId, chatId, data.userMessage, {
-        chatId,
-        title: data.title,
-        updatedAt: data.updatedAt,
-      });
-      appendMessageToCache(userId, chatId, data.assistantMessage, {
-        chatId,
-        updatedAt: data.updatedAt,
-      });
-      setThreads((prev) =>
-        prev.map((t) =>
-          t.chatId === chatId
-            ? { ...t, title: data.title, updatedAt: data.updatedAt }
-            : t
-        )
-      );
+      const finalizeIfReady = () => {
+        if (!donePayload || pendingText.length > 0) return;
+
+        const userMsg = cachedToMessage(donePayload.userMessage);
+        const assistantMsg = cachedToMessage(donePayload.assistantMessage);
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [chatId]: (prev[chatId] ?? []).map((m) => {
+            if (m.id === optimisticUser.id) return userMsg;
+            if (m.id === optimisticAssistant.id) return assistantMsg;
+            return m;
+          }),
+        }));
+
+        appendMessageToCache(userId, chatId, donePayload.userMessage, {
+          chatId,
+          title: donePayload.title ?? threadTitle,
+          updatedAt: donePayload.updatedAt ?? new Date().toISOString(),
+        });
+        appendMessageToCache(userId, chatId, donePayload.assistantMessage, {
+          chatId,
+          updatedAt: donePayload.updatedAt ?? new Date().toISOString(),
+        });
+        if (donePayload.title && donePayload.updatedAt) {
+          setThreads((prev) =>
+            prev.map((t) =>
+              t.chatId === chatId
+                ? {
+                    ...t,
+                    title: donePayload.title!,
+                    updatedAt: donePayload.updatedAt!,
+                  }
+                : t
+            )
+          );
+        }
+      };
+
+      const startTyping = () => {
+        if (typingTimer) return;
+        typingTimer = setInterval(() => {
+          if (pendingText.length === 0) {
+            stopTyping();
+            finalizeIfReady();
+            return;
+          }
+          const chunk = pendingText.slice(0, 2);
+          pendingText = pendingText.slice(2);
+          displayText += chunk;
+          updateAssistant(displayText);
+        }, 90);
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary !== -1) {
+          const chunk = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+
+          let event = 'message';
+          let data = '';
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+
+          if (data) {
+            const payload = JSON.parse(data) as {
+              text?: string;
+              message?: string;
+              userMessage?: CachedChatMessage;
+              assistantMessage?: CachedChatMessage;
+              title?: string;
+              updatedAt?: string;
+            };
+
+            if (event === 'delta' && payload.text) {
+              pendingText += payload.text;
+              startTyping();
+            }
+
+            if (event === 'error') {
+              setToast(payload.message ?? 'Reply failed.');
+            }
+
+            if (event === 'done' && payload.userMessage && payload.assistantMessage) {
+              donePayload = {
+                userMessage: payload.userMessage,
+                assistantMessage: payload.assistantMessage,
+                title: payload.title,
+                updatedAt: payload.updatedAt,
+              };
+              finalizeIfReady();
+            }
+          }
+
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
     } catch {
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [chatId]: (prev[chatId] ?? []).filter(
-          (m) => m.id !== optimisticUser.id
-        ),
-      }));
+      stopTyping();
+      setToast('Reply failed. Your message was kept.');
     } finally {
+      stopTyping();
       setSending(false);
       if (shouldNavigate && chatId) {
         router.push(chatDashboardPath(chatId));
@@ -427,6 +561,37 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         <p className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">
           {toast}
         </p>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Delete chat?
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              This will permanently remove "{stripMarkdownForDisplay(
+                deleteTarget.title
+              )}" and its messages.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteChat()}
+                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <ResizableHistorySidebar
@@ -471,7 +636,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                 onCommitRename={(next) => commitRenameChat(t.chatId, next)}
                 onCancelRename={() => setRenamingChatId(null)}
                 onShare={() => void shareChat(t.chatId)}
-                onDelete={() => void deleteChat(t.chatId)}
+                onDelete={() => requestDeleteChat(t.chatId)}
               />
             ))}
           </ul>
@@ -498,9 +663,10 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
         <div
           ref={scrollRef}
+          onScroll={handleScroll}
           className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain p-4 md:p-6"
         >
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+          <div className="mx-auto flex w-[80%] max-w-none flex-col gap-4">
             {messages.map((m) => (
               <div
                 key={m.id}
@@ -511,13 +677,77 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
               >
                 <div
                   className={cn(
-                    'max-w-[min(100%,34rem)] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
+                    'rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
                     m.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-slate-200 bg-white text-slate-800'
+                      ? 'max-w-[min(100%,34rem)] bg-blue-600 text-white'
+                      : 'w-full border border-slate-200 bg-white text-slate-800'
                   )}
                 >
-                  <p className="whitespace-pre-wrap">{m.content}</p>
+                  {m.role === 'assistant' ? (
+                    <>
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        🤖
+                      </p>
+                      {m.id.startsWith('tmp-assistant-') &&
+                      m.content.trim().length === 0 ? (
+                        <div
+                          className="flex items-center gap-1 text-slate-400"
+                          aria-label="Bot is typing"
+                        >
+                          <span
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce"
+                            style={{ animationDelay: '0ms' }}
+                          />
+                          <span
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce"
+                            style={{ animationDelay: '120ms' }}
+                          />
+                          <span
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce"
+                            style={{ animationDelay: '240ms' }}
+                          />
+                        </div>
+                      ) : (
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            a: ({ children, href }) => (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:text-blue-600 hover:underline"
+                              >
+                                {children}
+                              </a>
+                            ),
+                            p: ({ children }) => (
+                              <p className="mb-2 last:mb-0">{children}</p>
+                            ),
+                            ul: ({ children }) => (
+                              <ul className="ml-4 list-disc space-y-1">
+                                {children}
+                              </ul>
+                            ),
+                            ol: ({ children }) => (
+                              <ol className="ml-4 list-decimal space-y-1">
+                                {children}
+                              </ol>
+                            ),
+                            strong: ({ children }) => (
+                              <strong className="font-semibold text-slate-900">
+                                {children}
+                              </strong>
+                            ),
+                          }}
+                        >
+                          {m.content}
+                        </ReactMarkdown>
+                      )}
+                    </>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                  )}
                 </div>
               </div>
             ))}

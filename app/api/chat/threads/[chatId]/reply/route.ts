@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+import Groq from 'groq-sdk';
 
 import {
   addChatMessage,
@@ -10,8 +11,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const MODEL = 'gemini-2.5-flash';
-const API_HOST = 'https://generativelanguage.googleapis.com/v1beta';
+const MODEL = 'llama-3.3-70b-versatile';
 
 type RouteContext = { params: { chatId: string } };
 
@@ -24,12 +24,12 @@ type DeepDiveContext = {
   summary: string;
 };
 
-function getGeminiApiKey(): string {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getGroq(): Groq {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured.');
+    throw new Error('GROQ_API_KEY is not configured.');
   }
-  return apiKey;
+  return new Groq({ apiKey });
 }
 
 function buildSystemPrompt(context?: DeepDiveContext | null): string {
@@ -57,8 +57,8 @@ function buildSystemPrompt(context?: DeepDiveContext | null): string {
   ].join('\n');
 }
 
-function toGeminiRole(role: 'user' | 'assistant'): 'user' | 'model' {
-  return role === 'assistant' ? 'model' : 'user';
+function streamEvent(event: string, payload: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
 export async function POST(req: Request, { params }: RouteContext) {
@@ -105,78 +105,98 @@ export async function POST(req: Request, { params }: RouteContext) {
 
     const history = await listChatMessagesForThread(thread.id);
     const recent = history.slice(-12).map((msg) => ({
-      role: toGeminiRole(msg.role),
-      parts: [{ text: msg.content }],
+      role: msg.role,
+      content: msg.content,
     }));
 
-    const apiKey = getGeminiApiKey();
     const systemPrompt = buildSystemPrompt(body.context);
+    const groq = getGroq();
 
-    const response = await fetch(
-      `${API_HOST}/models/${MODEL}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: recent,
-          generationConfig: {
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        let assistantText = '';
+
+        try {
+          const completion = await groq.chat.completions.create({
+            model: MODEL,
             temperature: 0.35,
-            maxOutputTokens: 900,
-          },
-        }),
-      }
-    );
+            max_tokens: 900,
+            stream: true,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...recent,
+            ],
+          });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[gemini reply]', errorText);
-      return NextResponse.json(
-        { error: 'Failed to generate reply.' },
-        { status: 502 }
-      );
-    }
+          for await (const chunk of completion) {
+            const delta = chunk.choices?.[0]?.delta?.content ?? '';
+            if (!delta) continue;
+            assistantText += delta;
+            controller.enqueue(
+              encoder.encode(streamEvent('delta', { text: delta }))
+            );
+          }
 
-    const data = (await response.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
-    };
+          const reply = assistantText.trim();
+          if (!reply) {
+            controller.enqueue(
+              encoder.encode(
+                streamEvent('error', {
+                  message: 'Model returned an empty reply.',
+                })
+              )
+            );
+            controller.close();
+            return;
+          }
 
-    const reply = data.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text ?? '')
-      .join('')
-      .trim();
+          const assistantMessage = await addChatMessage(
+            thread.id,
+            'assistant',
+            reply
+          );
 
-    if (!reply) {
-      return NextResponse.json(
-        { error: 'Model returned an empty reply.' },
-        { status: 502 }
-      );
-    }
-
-    const assistantMessage = await addChatMessage(
-      thread.id,
-      'assistant',
-      reply
-    );
-
-    return NextResponse.json({
-      userMessage: {
-        id: userMessage.id,
-        role: userMessage.role,
-        content: userMessage.content,
-        createdAt: userMessage.created_at,
+          controller.enqueue(
+            encoder.encode(
+              streamEvent('done', {
+                userMessage: {
+                  id: userMessage.id,
+                  role: userMessage.role,
+                  content: userMessage.content,
+                  createdAt: userMessage.created_at,
+                },
+                assistantMessage: {
+                  id: assistantMessage.id,
+                  role: assistantMessage.role,
+                  content: assistantMessage.content,
+                  createdAt: assistantMessage.created_at,
+                },
+                chatId: thread.chat_id,
+                title,
+                updatedAt: new Date().toISOString(),
+              })
+            )
+          );
+          controller.close();
+        } catch (err) {
+          console.error('[chat reply stream]', err);
+          controller.enqueue(
+            encoder.encode(
+              streamEvent('error', { message: 'Failed to generate reply.' })
+            )
+          );
+          controller.close();
+        }
       },
-      assistantMessage: {
-        id: assistantMessage.id,
-        role: assistantMessage.role,
-        content: assistantMessage.content,
-        createdAt: assistantMessage.created_at,
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
       },
-      chatId: thread.chat_id,
-      title,
-      updatedAt: new Date().toISOString(),
     });
   } catch (err) {
     console.error('[chat reply POST]', err);

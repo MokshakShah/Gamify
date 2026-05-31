@@ -22,7 +22,12 @@ export default async function DashboardLayout({
     redirect('/');
   }
 
-  const user = await currentUser();
+  let user = null;
+  try {
+    user = await currentUser();
+  } catch (err) {
+    console.error('[dashboard] Clerk currentUser() failed:', err);
+  }
   if (user) {
     try {
       await upsertClerkProfile(user);
