@@ -16,6 +16,7 @@ import {
   type CachedChatMessage,
   type CachedChatThread,
 } from '@/lib/chat/client-cache';
+import { readDeepDiveContext } from '@/lib/chat/deep-dive-context';
 import { chatDashboardPath, chatShareUrl } from '@/lib/chat/urls';
 import { stripMarkdownForDisplay } from '@/lib/summary/markdown-display';
 import { cn } from '@/lib/utils';
@@ -34,12 +35,6 @@ interface ChatThread {
   updatedAt: string;
 }
 
-const WELCOME: ChatMessage = {
-  id: 'welcome',
-  role: 'assistant',
-  content:
-    "Hi — I'm here to help you learn from your materials. Ask anything about your uploads.",
-};
 
 function cachedToMessage(m: CachedChatMessage): ChatMessage {
   return { id: m.id, role: m.role, content: m.content };
@@ -55,7 +50,7 @@ function apiToCachedThread(t: {
 
 type ChatWorkspaceProps = {
   /** Public chat id from the URL (/dashboard/chat/[chatId]). */
-  urlChatId: string;
+  urlChatId?: string;
 };
 
 export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
@@ -71,15 +66,19 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
   const [input, setInput] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [pendingChatId, setPendingChatId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const listLoadedRef = useRef(false);
 
+  const resolvedChatId = urlChatId ?? pendingChatId ?? undefined;
   const active =
-    threads.find((t) => t.chatId === urlChatId) ??
-    (urlChatId ? { chatId: urlChatId, title: 'Chat', updatedAt: '' } : null);
-  const messages = urlChatId
-    ? (messagesByChat[urlChatId] ?? [WELCOME])
-    : [WELCOME];
+    threads.find((t) => t.chatId === resolvedChatId) ??
+    (resolvedChatId
+      ? { chatId: resolvedChatId, title: 'Chat', updatedAt: '' }
+      : null);
+  const messages = resolvedChatId
+    ? (messagesByChat[resolvedChatId] ?? [])
+    : [];
 
   useEffect(() => {
     if (!toast) return;
@@ -92,7 +91,11 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [messages, urlChatId]);
+  }, [messages, resolvedChatId]);
+
+  useEffect(() => {
+    if (urlChatId) setPendingChatId(null);
+  }, [urlChatId]);
 
   const loadThreadMessages = useCallback(
     async (uid: string, chatId: string, useCacheFirst = true) => {
@@ -119,10 +122,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           thread: { chatId: string; title: string; updatedAt: string };
           messages: CachedChatMessage[];
         };
-        const msgs =
-          data.messages.length > 0
-            ? data.messages.map(cachedToMessage)
-            : [WELCOME];
+        const msgs = data.messages.map(cachedToMessage);
         setMessagesByChat((prev) => ({ ...prev, [chatId]: msgs }));
         setThreadMessagesInCache(uid, chatId, data.messages);
         setThreads((prev) => {
@@ -156,8 +156,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         setThreads(cache.threads);
         const msgMap: Record<string, ChatMessage[]> = {};
         for (const [cid, msgs] of Object.entries(cache.messagesByChatId)) {
-          msgMap[cid] =
-            msgs.length > 0 ? msgs.map(cachedToMessage) : [WELCOME];
+          msgMap[cid] = msgs.map(cachedToMessage);
         }
         setMessagesByChat(msgMap);
       }
@@ -196,6 +195,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
   const navigateToChat = (chatId: string) => {
     router.push(chatDashboardPath(chatId));
+    setPendingChatId(null);
     setInput('');
   };
 
@@ -211,12 +211,33 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         replaceThreadsInCache(userId, next.map(apiToCachedThread));
         return next;
       });
-      setMessagesByChat((prev) => ({ ...prev, [t.chatId]: [WELCOME] }));
+      setMessagesByChat((prev) => ({ ...prev, [t.chatId]: [] }));
       setThreadMessagesInCache(userId, t.chatId, []);
       router.push(chatDashboardPath(t.chatId));
       setInput('');
     } catch {
       /* ignore */
+    }
+  };
+
+  const ensureThread = async (): Promise<ChatThread | null> => {
+    if (!userId) return null;
+    try {
+      const res = await fetch('/api/chat/threads', { method: 'POST' });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { thread: ChatThread };
+      const t = data.thread;
+      setThreads((prev) => {
+        const next = [t, ...prev.filter((x) => x.chatId !== t.chatId)];
+        replaceThreadsInCache(userId, next.map(apiToCachedThread));
+        return next;
+      });
+      setMessagesByChat((prev) => ({ ...prev, [t.chatId]: [] }));
+      setThreadMessagesInCache(userId, t.chatId, []);
+      setPendingChatId(t.chatId);
+      return t;
+    } catch {
+      return null;
     }
   };
 
@@ -299,13 +320,26 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
   const send = async () => {
     const trimmed = input.trim();
-    if (!trimmed || !active || !userId || sending || !urlChatId) return;
+    if (!trimmed || !userId || sending) return;
 
     setSending(true);
+    let chatId = resolvedChatId;
+    let threadTitle = active?.title ?? 'New chat';
+    const shouldNavigate = !urlChatId;
+    if (!chatId) {
+      const created = await ensureThread();
+      if (!created) {
+        setSending(false);
+        return;
+      }
+      chatId = created.chatId;
+      threadTitle = created.title;
+    }
+
     const title =
-      active.title === 'New chat'
+      threadTitle === 'New chat'
         ? trimmed.slice(0, 42) + (trimmed.length > 42 ? '…' : '')
-        : active.title;
+        : threadTitle;
 
     const optimisticUser: ChatMessage = {
       id: `tmp-${Date.now()}`,
@@ -315,92 +349,69 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
 
     setMessagesByChat((prev) => ({
       ...prev,
-      [urlChatId]: [...(prev[urlChatId] ?? [WELCOME]), optimisticUser],
+      [chatId]: [...(prev[chatId] ?? []), optimisticUser],
     }));
     setInput('');
 
     try {
       const res = await fetch(
-        `/api/chat/threads/${encodeURIComponent(urlChatId)}/messages`,
+        `/api/chat/threads/${encodeURIComponent(chatId)}/reply`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'user', content: trimmed, title }),
+          body: JSON.stringify({
+            content: trimmed,
+            title,
+            context: readDeepDiveContext(userId, chatId),
+          }),
         }
       );
       if (!res.ok) throw new Error('save failed');
 
       const data = (await res.json()) as {
-        message: CachedChatMessage;
+        userMessage: CachedChatMessage;
+        assistantMessage: CachedChatMessage;
         title: string;
         updatedAt: string;
       };
 
-      const userMsg = cachedToMessage(data.message);
+      const userMsg = cachedToMessage(data.userMessage);
+      const assistantMsg = cachedToMessage(data.assistantMessage);
       setMessagesByChat((prev) => {
-        const list = (prev[urlChatId] ?? [WELCOME]).filter(
+        const list = (prev[chatId] ?? []).filter(
           (m) => m.id !== optimisticUser.id
         );
-        return { ...prev, [urlChatId]: [...list, userMsg] };
+        return { ...prev, [chatId]: [...list, userMsg, assistantMsg] };
       });
 
-      appendMessageToCache(userId, urlChatId, data.message, {
-        chatId: urlChatId,
+      appendMessageToCache(userId, chatId, data.userMessage, {
+        chatId,
         title: data.title,
+        updatedAt: data.updatedAt,
+      });
+      appendMessageToCache(userId, chatId, data.assistantMessage, {
+        chatId,
         updatedAt: data.updatedAt,
       });
       setThreads((prev) =>
         prev.map((t) =>
-          t.chatId === urlChatId
+          t.chatId === chatId
             ? { ...t, title: data.title, updatedAt: data.updatedAt }
             : t
         )
       );
-
-      const reply: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content:
-          'This is a preview UI — wire your model API here. I would answer based on your uploaded summary and sources.',
-      };
-
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [urlChatId]: [...(prev[urlChatId] ?? []), reply],
-      }));
-
-      const replyRes = await fetch(
-        `/api/chat/threads/${encodeURIComponent(urlChatId)}/messages`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'assistant', content: reply.content }),
-        }
-      );
-      if (replyRes.ok) {
-        const replyData = (await replyRes.json()) as {
-          message: CachedChatMessage;
-          updatedAt: string;
-        };
-        const savedReply = cachedToMessage(replyData.message);
-        setMessagesByChat((prev) => {
-          const list = (prev[urlChatId] ?? []).filter((m) => m.id !== reply.id);
-          return { ...prev, [urlChatId]: [...list, savedReply] };
-        });
-        appendMessageToCache(userId, urlChatId, replyData.message, {
-          chatId: urlChatId,
-          updatedAt: replyData.updatedAt,
-        });
-      }
     } catch {
       setMessagesByChat((prev) => ({
         ...prev,
-        [urlChatId]: (prev[urlChatId] ?? []).filter(
+        [chatId]: (prev[chatId] ?? []).filter(
           (m) => m.id !== optimisticUser.id
         ),
       }));
     } finally {
       setSending(false);
+      if (shouldNavigate && chatId) {
+        router.push(chatDashboardPath(chatId));
+      }
     }
   };
 
@@ -437,7 +448,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           </button>
         }
       >
-        {loadingList ? (
+        {loadingList && threads.length === 0 ? (
           <p className="flex items-center justify-center gap-2 p-3 text-xs text-slate-500">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Loading…
@@ -475,6 +486,11 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
               ? stripMarkdownForDisplay(active.title)
               : 'AI Chat'}
           </h1>
+          {active?.chatId && messages.length > 0 ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+              ID: {active.chatId}
+            </span>
+          ) : null}
           {loadingMessages ? (
             <Loader2 className="ml-auto h-4 w-4 animate-spin text-slate-400" />
           ) : null}
@@ -501,11 +517,6 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                       : 'border border-slate-200 bg-white text-slate-800'
                   )}
                 >
-                  {m.role === 'assistant' ? (
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                      Assistant
-                    </p>
-                  ) : null}
                   <p className="whitespace-pre-wrap">{m.content}</p>
                 </div>
               </div>
@@ -532,13 +543,13 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                 }
               }}
               placeholder="Ask anything…"
-              disabled={!urlChatId || sending}
+              disabled={sending}
               className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent py-2 text-sm outline-none placeholder:text-slate-400 disabled:opacity-50"
               aria-label="Message"
             />
             <button
               type="submit"
-              disabled={!input.trim() || !urlChatId || sending}
+              disabled={!input.trim() || sending}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
               aria-label="Send"
             >

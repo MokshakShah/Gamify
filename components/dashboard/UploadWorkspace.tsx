@@ -28,11 +28,14 @@ import {
 } from '@/lib/upload/client-cache';
 import { uploadDashboardPath, uploadShareUrl } from '@/lib/upload/urls';
 import {
+  extractSummaryTopic,
   stripMarkdownForDisplay,
   summaryToPlainText,
 } from '@/lib/summary/summary-markdown';
 import { cleanYoutubeTitle } from '@/lib/youtube/clean-title';
 import { cn } from '@/lib/utils';
+import { writeDeepDiveContext } from '@/lib/chat/deep-dive-context';
+import { chatDashboardPath } from '@/lib/chat/urls';
 
 export type YoutubeSummaryMeta = {
   id: string;
@@ -397,6 +400,30 @@ export function UploadWorkspace({ urlSummaryId }: UploadWorkspaceProps) {
     );
   };
 
+  const startDeepDive = async () => {
+    if (!userId || !selectedDetail?.summary) return;
+    try {
+      const res = await fetch('/api/chat/threads', { method: 'POST' });
+      if (!res.ok) throw new Error('chat create failed');
+      const data = (await res.json()) as { thread: { chatId: string } };
+      const chatId = data.thread.chatId;
+      writeDeepDiveContext(userId, chatId, {
+        summaryId: selectedDetail.id,
+        topic: extractSummaryTopic(
+          selectedDetail.summary,
+          cleanYoutubeTitle(selectedDetail.title)
+        ),
+        title: selectedDetail.title,
+        channelName: selectedDetail.channelName,
+        sourceUrl: selectedDetail.sourceUrl,
+        summary: summaryToPlainText(selectedDetail.summary),
+      });
+      router.push(chatDashboardPath(chatId));
+    } catch {
+      setToast('Could not start deep dive. Please try again.');
+    }
+  };
+
   if (isLoaded && !isSignedIn) {
     return (
       <p className="p-8 text-sm text-slate-600">Sign in to use Upload.</p>
@@ -471,104 +498,66 @@ export function UploadWorkspace({ urlSummaryId }: UploadWorkspaceProps) {
       </ResizableHistorySidebar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50 lg:flex-row">
-        <section
-          className={cn(
-            'shrink-0 border-b border-slate-200 bg-white p-6 transition-opacity duration-200 lg:w-[min(100%,22rem)] lg:border-b-0 lg:border-r',
-            viewingHistory && 'opacity-95'
-          )}
-        >
-          <h2 className="text-lg font-semibold text-slate-900">Upload</h2>
-          {viewingHistory ? (
-            <p className="mt-1 text-sm text-slate-600">
-              Viewing a saved summary. Use{' '}
-              <button
-                type="button"
-                onClick={startNew}
-                className="font-semibold text-blue-600 hover:underline"
-              >
-                New upload
-              </button>{' '}
-              to paste another link.
-            </p>
-          ) : (
+        {!viewingHistory ? (
+          <section className="shrink-0 border-b border-slate-200 bg-white p-6 lg:w-[min(100%,22rem)] lg:border-b-0 lg:border-r">
+            <h2 className="text-lg font-semibold text-slate-900">Upload</h2>
             <p className="mt-1 text-sm text-slate-600">
               Paste a YouTube link. We validate the URL, fetch captions, then
               summarize with AI. No transcript → no summary.
             </p>
-          )}
 
-          <div
-            className={cn(
-              'mt-6 space-y-4 transition-opacity duration-200',
-              viewingHistory && 'pointer-events-none opacity-50'
-            )}
-            aria-disabled={viewingHistory}
-          >
-            <label className="block">
-              <span className="text-xs font-semibold uppercase text-slate-500">
-                YouTube link
-              </span>
-              <div
-                className={cn(
-                  'mt-2 flex items-center gap-2 rounded-xl border bg-white px-3 py-2 shadow-sm',
-                  viewingHistory
-                    ? 'cursor-not-allowed border-slate-100 bg-slate-50'
-                    : 'border-slate-200 focus-within:ring-2 focus-within:ring-blue-500/25'
-                )}
-              >
-                <Link2
-                  className={cn(
-                    'h-4 w-4 shrink-0',
-                    viewingHistory ? 'text-slate-300' : 'text-slate-400'
-                  )}
-                />
-                <input
-                  ref={urlRef}
-                  type="url"
-                  placeholder="https://www.youtube.com/watch?v=…"
-                  className="min-w-0 flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:text-slate-500"
-                  aria-label="Paste YouTube link"
-                  disabled={generating || viewingHistory}
-                  readOnly={viewingHistory}
-                />
-              </div>
-            </label>
+            <div className="mt-6 space-y-4">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase text-slate-500">
+                  YouTube link
+                </span>
+                <div className="mt-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-500/25">
+                  <Link2 className="h-4 w-4 shrink-0 text-slate-400" />
+                  <input
+                    ref={urlRef}
+                    type="url"
+                    placeholder="https://www.youtube.com/watch?v=…"
+                    className="min-w-0 flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:text-slate-500"
+                    aria-label="Paste YouTube link"
+                    disabled={generating}
+                  />
+                </div>
+              </label>
 
-            {!viewingHistory ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 PDF and audio uploads are coming later. Only YouTube URLs are
                 supported right now.
               </p>
-            ) : null}
 
-            {formError && !viewingHistory ? (
-              <p className="text-sm text-red-600" role="alert">
-                {formError}
-              </p>
-            ) : null}
+              {formError ? (
+                <p className="text-sm text-red-600" role="alert">
+                  {formError}
+                </p>
+              ) : null}
 
-            {statusLine && !viewingHistory ? (
-              <p className="text-sm text-blue-700">{statusLine}</p>
-            ) : null}
+              {statusLine ? (
+                <p className="text-sm text-blue-700">{statusLine}</p>
+              ) : null}
 
-            <button
-              type="button"
-              disabled={generating || viewingHistory}
-              onClick={() => void handleGenerate()}
-              className={cn(
-                'inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition',
-                'bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50'
-              )}
-            >
-              {generating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Wand2 className="h-4 w-4" />
-              )}
-              {generating ? 'Working…' : 'Generate summary'}
-            </button>
-          </div>
-        </section>
+              <button
+                type="button"
+                disabled={generating}
+                onClick={() => void handleGenerate()}
+                className={cn(
+                  'inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition',
+                  'bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+              >
+                {generating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Wand2 className="h-4 w-4" />
+                )}
+                {generating ? 'Working…' : 'Generate summary'}
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
@@ -641,13 +630,14 @@ export function UploadWorkspace({ urlSummaryId }: UploadWorkspaceProps) {
 
           {hasSummary ? (
             <nav className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-slate-200 px-6 py-4">
-              <Link
-                href="/dashboard/chat"
+              <button
+                type="button"
+                onClick={() => void startDeepDive()}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700 hover:text-indigo-700"
               >
                 Deep dive
                 <ArrowRight className="h-4 w-4" />
-              </Link>
+              </button>
               <Link
                 href="/dashboard/mcq"
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700 hover:text-indigo-700"
