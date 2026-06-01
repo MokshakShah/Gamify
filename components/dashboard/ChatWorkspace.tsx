@@ -3,7 +3,7 @@
 import { useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, SendHorizontal, Sparkles } from 'lucide-react';
+import { Loader2, Plus, SendHorizontal, Sparkles, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HistorySidebarRow } from '@/components/dashboard/HistorySidebarRow';
@@ -86,6 +86,8 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
   >([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const listLoadedRef = useRef(false);
 
@@ -369,6 +371,9 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
     }
 
     setSending(true);
+    abortRef.current?.abort();
+    const abortController = new AbortController();
+    abortRef.current = abortController;
     let chatId = resolvedChatId;
     let threadTitle = active?.title ?? 'New chat';
     const shouldNavigate = !urlChatId;
@@ -417,6 +422,12 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
     }));
     setInput('');
 
+    let pendingText = '';
+    let displayText = '';
+    let typingTimer: ReturnType<typeof setInterval> | null = null;
+    let updateAssistant = (_nextText: string) => {};
+    let stopTyping = () => {};
+
     try {
       const res = await fetch(
         `/api/chat/threads/${encodeURIComponent(chatId)}/reply`,
@@ -428,15 +439,15 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
             title,
             context: readDeepDiveContext(userId, chatId),
           }),
+          signal: abortController.signal,
         }
       );
       if (!res.ok || !res.body) throw new Error('save failed');
 
       const reader = res.body.getReader();
+      readerRef.current = reader;
       const decoder = new TextDecoder();
       let buffer = '';
-      let pendingText = '';
-      let displayText = '';
       let donePayload: {
         userMessage: CachedChatMessage;
         assistantMessage: CachedChatMessage;
@@ -444,9 +455,8 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         updatedAt?: string;
       } | null = null;
       const attachmentsSnapshot = pendingAttachments;
-      let typingTimer: ReturnType<typeof setInterval> | null = null;
 
-      const updateAssistant = (nextText: string) => {
+      updateAssistant = (nextText: string) => {
         setMessagesByChat((prev) => ({
           ...prev,
           [chatId]: (prev[chatId] ?? []).map((m) =>
@@ -455,7 +465,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         }));
       };
 
-      const stopTyping = () => {
+      stopTyping = () => {
         if (!typingTimer) return;
         clearInterval(typingTimer);
         typingTimer = null;
@@ -566,15 +576,38 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           boundary = buffer.indexOf('\n\n');
         }
       }
-    } catch {
-      stopTyping();
-      setToast('Reply failed. Your message was kept.');
+    } catch (err) {
+      const aborted =
+        abortController.signal.aborted ||
+        (err instanceof DOMException && err.name === 'AbortError');
+      if (aborted) {
+        if (pendingText.length > 0) {
+          displayText += pendingText;
+          pendingText = '';
+          updateAssistant(displayText);
+        }
+      } else {
+        stopTyping();
+        setToast('Reply failed. Your message was kept.');
+      }
     } finally {
       stopTyping();
       setSending(false);
+      abortRef.current = null;
+      readerRef.current = null;
       if (shouldNavigate && chatId) {
         router.push(chatDashboardPath(chatId));
       }
+    }
+  };
+
+  const stopReply = () => {
+    if (!sending) return;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    if (readerRef.current) {
+      readerRef.current.cancel().catch(() => {});
+      readerRef.current = null;
     }
   };
 
@@ -893,6 +926,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
             className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm"
             onSubmit={(e) => {
               e.preventDefault();
+              if (sending) return;
               void send();
             }}
           >
@@ -944,6 +978,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
+                    if (sending) return;
                     void send();
                   }
                 }}
@@ -953,18 +988,25 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                 aria-label="Message"
               />
             </div>
-            <button
-              type="submit"
-              disabled={(!input.trim() && pendingAttachments.length === 0) || sending || uploadingAttachment}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
-              aria-label="Send"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
+            {sending ? (
+              <button
+                type="button"
+                onClick={stopReply}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-slate-800"
+                aria-label="Stop"
+              >
+                <Square className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={(!input.trim() && pendingAttachments.length === 0) || uploadingAttachment}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
+                aria-label="Send"
+              >
                 <SendHorizontal className="h-4 w-4" />
-              )}
-            </button>
+              </button>
+            )}
           </form>
         </div>
       </section>

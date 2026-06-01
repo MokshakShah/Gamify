@@ -116,6 +116,17 @@ export async function POST(req: Request, { params }: RouteContext) {
       async start(controller) {
         const encoder = new TextEncoder();
         let assistantText = '';
+        const { signal } = req;
+        const handleAbort = () => {
+          controller.close();
+        };
+
+        if (signal.aborted) {
+          controller.close();
+          return;
+        }
+
+        signal.addEventListener('abort', handleAbort);
 
         try {
           const completion = await groq.chat.completions.create({
@@ -130,12 +141,18 @@ export async function POST(req: Request, { params }: RouteContext) {
           });
 
           for await (const chunk of completion) {
+            if (signal.aborted) break;
             const delta = chunk.choices?.[0]?.delta?.content ?? '';
             if (!delta) continue;
             assistantText += delta;
             controller.enqueue(
               encoder.encode(streamEvent('delta', { text: delta }))
             );
+          }
+
+          if (signal.aborted) {
+            controller.close();
+            return;
           }
 
           const reply = assistantText.trim();
@@ -180,13 +197,21 @@ export async function POST(req: Request, { params }: RouteContext) {
           );
           controller.close();
         } catch (err) {
-          console.error('[chat reply stream]', err);
-          controller.enqueue(
-            encoder.encode(
-              streamEvent('error', { message: 'Failed to generate reply.' })
-            )
-          );
+          if (!signal.aborted) {
+            console.error('[chat reply stream]', err);
+            controller.enqueue(
+              encoder.encode(
+                streamEvent('error', { message: 'Failed to generate reply.' })
+              )
+            );
+          }
           controller.close();
+        } finally {
+          signal.removeEventListener('abort', handleAbort);
+          console.log('[chat reply] stream ended', {
+            assistantTextLength: assistantText.length,
+            aborted: signal.aborted,
+          });
         }
       },
     });

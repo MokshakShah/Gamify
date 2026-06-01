@@ -9,6 +9,9 @@ export type ChatAttachmentRow = {
   file_name: string;
   content_type: string | null;
   size_bytes: number;
+  extraction_status?: string | null;
+  extraction_error?: string | null;
+  chunk_count?: number | null;
   created_at: string;
 };
 
@@ -79,6 +82,29 @@ export async function deleteChatAttachmentById(
   const { error } = await supabase
     .from('chat_attachments')
     .delete()
+    .eq('id', attachmentId)
+    .eq('clerk_user_id', clerkUserId);
+
+  if (error) throw error;
+}
+
+export async function updateChatAttachmentExtraction(
+  clerkUserId: string,
+  attachmentId: string,
+  status: 'pending' | 'completed' | 'failed' | 'skipped',
+  errorMessage: string | null,
+  chunkCount: number
+): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) throw new Error('Supabase is not configured.');
+
+  const { error } = await supabase
+    .from('chat_attachments')
+    .update({
+      extraction_status: status,
+      extraction_error: errorMessage,
+      chunk_count: chunkCount,
+    })
     .eq('id', attachmentId)
     .eq('clerk_user_id', clerkUserId);
 

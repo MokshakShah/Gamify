@@ -1,14 +1,19 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 
+import { chunkText } from '@/lib/pdf/chunk-text';
+import { extractPdfText } from '@/lib/pdf/extract-pdf-text';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { getChatThreadByChatId } from '@/lib/supabase/chat';
+import { insertChatAttachmentChunks } from '@/lib/supabase/chat-attachment-chunks';
 import {
   countChatAttachmentsSince,
   createChatAttachment,
+  updateChatAttachmentExtraction,
 } from '@/lib/supabase/chat-attachments';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 const BUCKET = 'chat-attachments';
 const DAILY_LIMIT = 3;
@@ -90,6 +95,68 @@ export async function POST(req: Request) {
       content_type: file.type || null,
       size_bytes: file.size,
     });
+
+    const isPdf =
+      file.type === 'application/pdf' ||
+      safeName.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
+      try {
+        const text = await extractPdfText(arrayBuffer);
+        const chunks = chunkText(text, {
+          maxTokens: 1000,
+          overlapTokens: 150,
+        });
+
+        if (chunks.length > 0) {
+          await insertChatAttachmentChunks(
+            chunks.map((chunk, index) => ({
+              attachment_id: attachment.id,
+              thread_id: thread.id,
+              clerk_user_id: userId,
+              chat_id: chatId,
+              chunk_index: index,
+              content: chunk.content,
+              token_count: chunk.tokenCount,
+            }))
+          );
+        }
+
+        await updateChatAttachmentExtraction(
+          userId,
+          attachment.id,
+          'completed',
+          null,
+          chunks.length
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to extract PDF text.';
+        try {
+          await updateChatAttachmentExtraction(
+            userId,
+            attachment.id,
+            'failed',
+            message,
+            0
+          );
+        } catch (updateErr) {
+          console.error('[chat attachments extract]', updateErr);
+        }
+      }
+    } else {
+      try {
+        await updateChatAttachmentExtraction(
+          userId,
+          attachment.id,
+          'skipped',
+          'Unsupported content type.',
+          0
+        );
+      } catch (err) {
+        console.error('[chat attachments extract]', err);
+      }
+    }
 
     const { data: publicUrl } = supabase.storage
       .from(BUCKET)
