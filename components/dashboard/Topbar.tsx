@@ -42,7 +42,7 @@ export function Topbar() {
         </div>
 
         <nav className="flex-1 overflow-x-auto">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center gap-2">
             {navItems.map((item) => {
               const isActive =
                 item.href === '/dashboard'

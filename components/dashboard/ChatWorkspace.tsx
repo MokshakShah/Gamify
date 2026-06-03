@@ -828,11 +828,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
               ? stripMarkdownForDisplay(active.title)
               : 'AI Chat'}
           </h1>
-          {active?.chatId && messages.length > 0 ? (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-              ID: {active.chatId}
-            </span>
-          ) : null}
+
           {loadingMessages ? (
             <Loader2 className="ml-auto h-4 w-4 animate-spin text-slate-400" />
           ) : null}
@@ -910,6 +906,32 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                               <ol className="ml-4 list-decimal space-y-1">
                                 {children}
                               </ol>
+                            ),
+                            table: ({ children }) => (
+                              <div className="my-4 overflow-x-auto">
+                                <table className="min-w-full border-collapse border border-slate-300">
+                                  {children}
+                                </table>
+                              </div>
+                            ),
+                            thead: ({ children }) => (
+                              <thead className="bg-slate-50">{children}</thead>
+                            ),
+                            tbody: ({ children }) => (
+                              <tbody>{children}</tbody>
+                            ),
+                            tr: ({ children }) => (
+                              <tr className="border-b border-slate-200">{children}</tr>
+                            ),
+                            th: ({ children }) => (
+                              <th className="border border-slate-300 px-4 py-2 text-left font-semibold text-slate-900">
+                                {children}
+                              </th>
+                            ),
+                            td: ({ children }) => (
+                              <td className="border border-slate-300 px-4 py-2 text-slate-700">
+                                {children}
+                              </td>
                             ),
                             strong: ({ children }) => (
                               <strong className="font-semibold text-slate-900">
