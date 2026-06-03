@@ -3,8 +3,10 @@ import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 
 import {
+  ChatAttachmentChunkRow,
   addChatMessage,
   getChatThreadByChatId,
+  listChatAttachmentChunks,
   listChatMessagesForThread,
   updateChatThreadTitleByChatId,
 } from '@/lib/supabase/chat';
@@ -32,29 +34,42 @@ function getGroq(): Groq {
   return new Groq({ apiKey });
 }
 
-function buildSystemPrompt(context?: DeepDiveContext | null): string {
-  if (!context) {
-    return [
-      'You are a helpful study tutor for Gamify.',
-      'Explain concepts clearly, step-by-step, and use short paragraphs.',
-      'If the user asks for depth, include examples and intuition.',
-      'If a question is outside the available context, say so and answer generally.',
-    ].join('\n');
+function buildSystemPrompt(
+  context?: DeepDiveContext | null,
+  pdfChunks?: ChatAttachmentChunkRow[]
+): string {
+  const lines = [
+    'You are a helpful study tutor for Gamify.',
+    'Explain concepts clearly, step-by-step, and use short paragraphs.',
+    'If the user asks for depth, include examples and intuition.',
+  ];
+
+  if (context) {
+    lines.push(
+      '',
+      'CONTEXT FROM YOUTUBE TRANSCRIPT:',
+      `Topic: ${context.topic}`,
+      `Title: ${context.title}`,
+      `Channel: ${context.channelName}`,
+      `Summary: ${context.summary}`
+    );
   }
 
-  return [
-    'You are a deep-dive study tutor for Gamify.',
-    'Use the provided context to answer and expand with intuition and examples.',
-    'If the user asks beyond the context, say so and answer generally.',
+  if (pdfChunks && pdfChunks.length > 0) {
+    lines.push('', 'CONTEXT FROM UPLOADED PDF:');
+    // Limit to ~20 chunks to stay safe, though Llama 3.3 handles more.
+    pdfChunks.slice(0, 20).forEach((chunk, i) => {
+      lines.push(`[Chunk ${i + 1}]: ${chunk.content}`);
+    });
+  }
+
+  lines.push(
     '',
-    `Topic: ${context.topic}`,
-    `Title: ${context.title}`,
-    `Channel: ${context.channelName}`,
-    `Source: ${context.sourceUrl}`,
-    '',
-    'Summary context:',
-    context.summary,
-  ].join('\n');
+    'If the user asks about the document or video, use the provided context.',
+    'If the question is unrelated to the context, answer using your general knowledge but keep it professional.'
+  );
+
+  return lines.join('\n');
 }
 
 function streamEvent(event: string, payload: unknown): string {
@@ -103,13 +118,17 @@ export async function POST(req: Request, { params }: RouteContext) {
 
     const userMessage = await addChatMessage(thread.id, 'user', content);
 
-    const history = await listChatMessagesForThread(thread.id);
+    const [history, pdfChunks] = await Promise.all([
+      listChatMessagesForThread(thread.id),
+      listChatAttachmentChunks(thread.id),
+    ]);
+
     const recent = history.slice(-12).map((msg) => ({
       role: msg.role,
       content: msg.content,
     }));
 
-    const systemPrompt = buildSystemPrompt(body.context);
+    const systemPrompt = buildSystemPrompt(body.context, pdfChunks);
     const groq = getGroq();
 
     const stream = new ReadableStream({

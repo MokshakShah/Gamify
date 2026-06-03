@@ -3,7 +3,15 @@
 import { useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, SendHorizontal, Sparkles, Square } from 'lucide-react';
+import {
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Plus,
+  SendHorizontal,
+  Sparkles,
+  Square,
+} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HistorySidebarRow } from '@/components/dashboard/HistorySidebarRow';
@@ -45,6 +53,8 @@ type PendingAttachment = {
   id: string;
   fileName: string;
   url: string;
+  contentType: string | null;
+  sizeBytes: number;
 };
 
 
@@ -520,11 +530,13 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
             finalizeIfReady();
             return;
           }
-          const chunk = pendingText.slice(0, 2);
-          pendingText = pendingText.slice(2);
+          // Speed up typing if we have a lot of text buffered
+          const stepSize = pendingText.length > 50 ? 5 : 2;
+          const chunk = pendingText.slice(0, stepSize);
+          pendingText = pendingText.slice(stepSize);
           displayText += chunk;
           updateAssistant(displayText);
-        }, 90);
+        }, 40);
       };
 
       while (true) {
@@ -586,12 +598,12 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
           pendingText = '';
           updateAssistant(displayText);
         }
+        stopTyping();
       } else {
         stopTyping();
         setToast('Reply failed. Your message was kept.');
       }
     } finally {
-      stopTyping();
       setSending(false);
       abortRef.current = null;
       readerRef.current = null;
@@ -611,8 +623,20 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
     }
   };
 
-  const uploadAttachment = async (file: File) => {
-    if (!userId || uploadingAttachment) return;
+  const uploadAttachments = async (files: File[]) => {
+    if (!userId || uploadingAttachment || files.length === 0) return;
+
+    const remainingSlots = 3 - pendingAttachments.length;
+    if (remainingSlots <= 0) {
+      setToast('You can attach up to 3 files at a time.');
+      return;
+    }
+
+    const filesToUpload = files.slice(0, remainingSlots);
+    if (files.length > remainingSlots) {
+      setToast('You can attach up to 3 files at a time.');
+    }
+
     setUploadingAttachment(true);
 
     let chatId = resolvedChatId;
@@ -629,39 +653,54 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
     }
 
     try {
-      const form = new FormData();
-      form.append('chatId', chatId);
-      form.append('file', file);
+      for (const file of filesToUpload) {
+        const form = new FormData();
+        form.append('chatId', chatId);
+        form.append('file', file);
 
-      const res = await fetch('/api/chat/attachments', {
-        method: 'POST',
-        body: form,
-      });
+        const res = await fetch('/api/chat/attachments', {
+          method: 'POST',
+          body: form,
+        });
 
-      if (res.status === 429) {
-        setToast('Daily attachment limit reached (3/day).');
-        return;
+        if (res.status === 429) {
+          setToast('Daily attachment limit reached (3/day).');
+          break;
+        }
+
+        if (!res.ok) throw new Error('upload failed');
+
+        const data = (await res.json()) as {
+          attachment: {
+            id: string;
+            url: string;
+            fileName: string;
+            contentType: string | null;
+            sizeBytes: number;
+          };
+        };
+
+        setPendingAttachments((prev) => [
+          ...prev,
+          {
+            id: data.attachment.id,
+            url: data.attachment.url,
+            fileName: data.attachment.fileName,
+            contentType: data.attachment.contentType,
+            sizeBytes: data.attachment.sizeBytes,
+          },
+        ]);
       }
 
-      if (!res.ok) throw new Error('upload failed');
-
-      const data = (await res.json()) as {
-        attachment: { id: string; url: string; fileName: string };
-      };
-
-      setPendingAttachments((prev) => [
-        ...prev,
-        {
-          id: data.attachment.id,
-          url: data.attachment.url,
-          fileName: data.attachment.fileName,
-        },
-      ]);
-      if (threadTitle === 'New chat') {
+      if (threadTitle === 'New chat' && filesToUpload[0]) {
         setThreads((prev) =>
           prev.map((t) =>
             t.chatId === chatId
-              ? { ...t, title: file.name, updatedAt: new Date().toISOString() }
+              ? {
+                  ...t,
+                  title: filesToUpload[0].name,
+                  updatedAt: new Date().toISOString(),
+                }
               : t
           )
         );
@@ -933,11 +972,13 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
             <input
               ref={fileInputRef}
               type="file"
+              multiple
+              accept="image/*,application/pdf,.doc,.docx,.txt,.ppt,.pptx"
               className="hidden"
               onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
+                const files = Array.from(e.currentTarget.files ?? []);
                 e.currentTarget.value = '';
-                if (file) void uploadAttachment(file);
+                if (files.length > 0) void uploadAttachments(files);
               }}
             />
             <button
@@ -952,22 +993,48 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
             </button>
             <div className="flex min-w-0 flex-1 flex-col gap-2">
               {pendingAttachments.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {pendingAttachments.map((att) => (
-                    <span
+                    <div
                       key={att.id}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700"
+                      className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700"
                     >
-                      {att.fileName}
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+                        {att.contentType?.startsWith('image/') ? (
+                          <img
+                            src={att.url}
+                            alt={att.fileName}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-500">
+                            {att.fileName.toLowerCase().endsWith('.pdf') ? (
+                              <FileText className="h-5 w-5" />
+                            ) : (
+                              <ImageIcon className="h-5 w-5" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-slate-800">
+                          {att.fileName}
+                        </p>
+                        <p className="truncate text-[11px] text-slate-500">
+                          {att.contentType?.startsWith('image/')
+                            ? 'Image preview ready'
+                            : 'Document ready'}
+                        </p>
+                      </div>
                       <button
                         type="button"
                         onClick={() => void removePendingAttachment(att)}
-                        className="text-slate-400 hover:text-slate-600"
+                        className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-600"
                         aria-label={`Remove ${att.fileName}`}
                       >
                         ×
                       </button>
-                    </span>
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -984,7 +1051,7 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
                 }}
                 placeholder="Ask anything…"
                 disabled={sending}
-                className="max-h-32 min-h-[2.5rem] w-full resize-none border-0 bg-transparent py-2 text-sm outline-none placeholder:text-slate-400 disabled:opacity-50"
+                className="max-h-32 min-h-10 w-full resize-none border-0 bg-transparent py-2 text-sm outline-none placeholder:text-slate-400 disabled:opacity-50"
                 aria-label="Message"
               />
             </div>

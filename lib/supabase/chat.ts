@@ -72,6 +72,34 @@ export async function listChatMessagesForThread(
   return (data ?? []) as ChatMessageRow[];
 }
 
+export type ChatAttachmentChunkRow = {
+  id: string;
+  attachment_id: string;
+  thread_id: string;
+  clerk_user_id: string;
+  chat_id: string;
+  chunk_index: number;
+  content: string;
+  token_count: number;
+  created_at: string;
+};
+
+export async function listChatAttachmentChunks(
+  threadId: string
+): Promise<ChatAttachmentChunkRow[]> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('chat_attachment_chunks')
+    .select('*')
+    .eq('thread_id', threadId)
+    .order('chunk_index', { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as ChatAttachmentChunkRow[];
+}
+
 export async function createChatThread(
   clerkUserId: string,
   title = 'New chat'
