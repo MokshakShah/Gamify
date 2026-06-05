@@ -9,7 +9,7 @@ import {
   MoreVertical, 
   Play, 
   Trash2, 
-  Youtube 
+  Video 
 } from 'lucide-react';
 
 type McqSet = {
@@ -34,7 +34,7 @@ export function McqSetCard({ mcqSet, onDelete }: McqSetCardProps) {
       case 'pdf':
         return <FileText className="h-4 w-4 text-red-500" />;
       case 'youtube':
-        return <Youtube className="h-4 w-4 text-red-500" />;
+        return <Video className="h-4 w-4 text-red-500" />;
       default:
         return <BookOpen className="h-4 w-4 text-blue-500" />;
     }

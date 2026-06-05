@@ -10,6 +10,8 @@ import {
   listChatMessagesForThread,
   updateChatThreadTitleByChatId,
 } from '@/lib/supabase/chat';
+import { generateMcqQuestions } from '@/lib/groq/generate-mcq';
+import { createMcqSet, addMcqQuestions } from '@/lib/supabase/mcq';
 
 export const dynamic = 'force-dynamic';
 
@@ -273,10 +275,72 @@ export async function POST(req: Request, { params }: RouteContext) {
 
           let finalReply = reply;
 
-          // If this is an MCQ request, provide simple link to MCQ section
+          // If this is an MCQ request, generate MCQs in background and show simple link
           if (mcqRequest.isMcqRequest && mcqRequest.topic) {
-            const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
-            finalReply += mcqLink;
+            try {
+              // Generate context for MCQ generation
+              let mcqContext = '';
+              if (body.context?.summary) {
+                mcqContext = body.context.summary;
+              } else if (pdfChunks && pdfChunks.length > 0) {
+                mcqContext = pdfChunks.slice(0, 10).map(chunk => chunk.content).join('\n\n');
+              }
+
+              // Determine source type
+              let sourceType: 'topic' | 'pdf' | 'youtube' = 'topic';
+              let sourceId: string | undefined;
+              
+              if (body.context) {
+                sourceType = 'youtube';
+                sourceId = body.context.summaryId;
+              } else if (pdfChunks && pdfChunks.length > 0) {
+                sourceType = 'pdf';
+              }
+
+              // Generate MCQs in background
+              const mcqQuestions = await generateMcqQuestions(
+                mcqRequest.topic,
+                mcqRequest.count || 10,
+                mcqContext
+              );
+
+              if (mcqQuestions.length > 0) {
+                // Create MCQ set in database
+                const mcqSet = await createMcqSet(
+                  userId,
+                  generateSetTitle(mcqRequest.topic, sourceType),
+                  mcqRequest.topic,
+                  sourceType,
+                  sourceId
+                );
+
+                if (mcqSet) {
+                  // Add questions to database
+                  await addMcqQuestions(
+                    mcqSet.id,
+                    mcqQuestions.map((q, index) => ({
+                      ...q,
+                      question_order: index + 1,
+                    }))
+                  );
+
+                  // Show simple success message with link
+                  const mcqLink = `\n\n✅ **MCQ generated!** [Go to MCQ Section →](/dashboard/mcq)`;
+                  finalReply += mcqLink;
+                } else {
+                  const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
+                  finalReply += mcqLink;
+                }
+              } else {
+                const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
+                finalReply += mcqLink;
+              }
+            } catch (mcqError) {
+              console.error('MCQ generation failed:', mcqError);
+              // Even if generation fails, still show link
+              const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
+              finalReply += mcqLink;
+            }
           }
 
           const assistantMessage = await addChatMessage(
