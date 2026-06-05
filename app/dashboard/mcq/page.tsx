@@ -1,13 +1,215 @@
+'use client';
+
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
 import { PanelShell } from '@/components/dashboard/PanelShell';
+import { McqSetCard } from '@/components/dashboard/McqSetCard';
+import { Loader2, Plus, Sparkles } from 'lucide-react';
+
+type McqSet = {
+  id: string;
+  title: string;
+  topic: string;
+  source_type: 'topic' | 'pdf' | 'youtube';
+  created_at: string;
+};
 
 export default function McqPage() {
+  const { userId, isLoaded } = useAuth();
+  const [mcqSets, setMcqSets] = useState<McqSet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [count, setCount] = useState(10);
+
+  useEffect(() => {
+    if (!isLoaded || !userId) {
+      if (isLoaded) setLoading(false);
+      return;
+    }
+
+    const fetchMcqSets = async () => {
+      try {
+        const res = await fetch('/api/mcq/sets');
+        if (res.ok) {
+          const data = await res.json();
+          setMcqSets(data.mcqSets || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch MCQ sets:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMcqSets();
+  }, [userId, isLoaded]);
+
+  const handleGenerateMcqs = async () => {
+    if (!topic.trim() || generating) return;
+
+    setGenerating(true);
+    try {
+      const res = await fetch('/api/mcq/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: topic.trim(),
+          count,
+          sourceType: 'topic',
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMcqSets(prev => [data.mcqSet, ...prev]);
+        setShowForm(false);
+        setTopic('');
+        setCount(10);
+      } else {
+        const error = await res.json();
+        alert(error.error || 'Failed to generate MCQs');
+      }
+    } catch (error) {
+      console.error('Failed to generate MCQs:', error);
+      alert('Failed to generate MCQs');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const deleteMcqSet = async (setId: string) => {
+    try {
+      const res = await fetch(`/api/mcq/sets/${setId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setMcqSets(prev => prev.filter(set => set.id !== setId));
+      }
+    } catch (error) {
+      console.error('Failed to delete MCQ set:', error);
+    }
+  };
+
+  if (!isLoaded || loading) {
+    return (
+      <PanelShell
+        title="MCQ"
+        description="Practice quizzes with timed sessions and scoring."
+      >
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        </div>
+      </PanelShell>
+    );
+  }
+
   return (
     <PanelShell
       title="MCQ"
       description="Practice quizzes with timed sessions and scoring."
     >
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-        MCQ workflow will appear here.
+      <div className="space-y-6">
+        {/* Generate MCQ Button */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-slate-900">Your MCQ Sets</h2>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            Generate MCQs
+          </button>
+        </div>
+
+        {/* MCQ Generation Form */}
+        {showForm && (
+          <div className="rounded-xl border border-slate-200 bg-white p-6">
+            <h3 className="text-sm font-semibold text-slate-900 mb-4">Generate New MCQ Set</h3>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="topic" className="block text-sm font-medium text-slate-700 mb-2">
+                  Topic
+                </label>
+                <input
+                  id="topic"
+                  type="text"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="e.g., Machine Learning, React Hooks, Data Structures"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label htmlFor="count" className="block text-sm font-medium text-slate-700 mb-2">
+                  Number of Questions (Max 15)
+                </label>
+                <input
+                  id="count"
+                  type="number"
+                  min="1"
+                  max="15"
+                  value={count}
+                  onChange={(e) => setCount(Math.min(15, Math.max(1, parseInt(e.target.value) || 10)))}
+                  className="w-32 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleGenerateMcqs}
+                  disabled={!topic.trim() || generating}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      Generate MCQs
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={() => setShowForm(false)}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MCQ Sets Grid */}
+        {mcqSets.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+            <Plus className="mx-auto h-12 w-12 text-slate-400" />
+            <h3 className="mt-4 text-sm font-semibold text-slate-900">No MCQ sets yet</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Generate your first MCQ set using the button above, or ask the AI chatbot with phrases like:
+            </p>
+            <ul className="mt-3 space-y-1 text-sm text-slate-500">
+              <li>"Generate 5 MCQs on machine learning"</li>
+              <li>"Create quiz questions for this PDF"</li>
+              <li>"Make MCQs about React hooks"</li>
+            </ul>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {mcqSets.map((set) => (
+              <McqSetCard
+                key={set.id}
+                mcqSet={set}
+                onDelete={() => deleteMcqSet(set.id)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </PanelShell>
   );

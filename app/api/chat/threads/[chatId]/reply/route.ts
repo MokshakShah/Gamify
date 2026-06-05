@@ -42,6 +42,20 @@ function buildSystemPrompt(
     'You are a helpful study tutor for Gamify.',
     'Explain concepts clearly, step-by-step, and use short paragraphs.',
     'If the user asks for depth, include examples and intuition.',
+    '',
+    'IMPORTANT - MCQ REQUESTS:',
+    'If the user asks for MCQs, multiple choice questions, quiz questions, or any form of questions:',
+    '- NEVER generate actual questions in this chat',
+    '- NEVER write out question text, options A/B/C/D, or answers',
+    '- Simply say "MCQs can be generated in the MCQ section" and redirect them',
+    '- Do NOT create any quiz content in this conversation',
+    '',
+    'Examples of what NOT to do:',
+    '- Do not write "1. What is..." followed by options',
+    '- Do not write "A) option B) option C) option D) option"',
+    '- Do not write "Answer: C"',
+    '',
+    'Instead, just acknowledge and redirect to MCQ section.',
   ];
 
   if (context) {
@@ -74,6 +88,73 @@ function buildSystemPrompt(
 
 function streamEvent(event: string, payload: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: string; count?: number } {
+  const lowerContent = content.toLowerCase();
+  
+  // MCQ keywords
+  const mcqKeywords = [
+    'mcq', 'mcqs', 'multiple choice', 'quiz questions', 'questions',
+    'generate questions', 'create questions', 'make questions', 'quiz'
+  ];
+  
+  const isMcqRequest = mcqKeywords.some(keyword => lowerContent.includes(keyword));
+  
+  if (!isMcqRequest) {
+    return { isMcqRequest: false };
+  }
+  
+  // Extract count (default to 10, max 15)
+  let count = 10;
+  const countMatch = content.match(/(\d+)\s*(?:mcq|questions?|quiz)/i);
+  if (countMatch) {
+    const requestedCount = parseInt(countMatch[1]);
+    if (requestedCount > 0) {
+      count = Math.min(requestedCount, 15);
+    }
+  }
+  
+  // Extract topic - look for common patterns
+  let topic = '';
+  
+  // Pattern: "MCQs on [topic]" or "questions about [topic]"
+  const onPattern = content.match(/(?:mcqs?|questions?|quiz).*?(?:on|about|for)\s+(.+?)(?:\s|$|\.|\?|!)/i);
+  if (onPattern) {
+    topic = onPattern[1].trim();
+  }
+  
+  // Pattern: "[topic] MCQs" or "[topic] questions"
+  if (!topic) {
+    const beforePattern = content.match(/(.+?)\s+(?:mcqs?|questions?|quiz)/i);
+    if (beforePattern) {
+      const candidate = beforePattern[1].trim();
+      // Skip common words
+      if (!['generate', 'create', 'make', 'give', 'me', 'some', 'few'].includes(candidate.toLowerCase())) {
+        topic = candidate;
+      }
+    }
+  }
+  
+  // If no specific topic found, check for "this PDF" or "this document"
+  if (!topic && (lowerContent.includes('this pdf') || lowerContent.includes('this document'))) {
+    topic = 'document content';
+  }
+  
+  return { isMcqRequest: true, topic: topic || 'general knowledge', count };
+}
+
+function generateSetTitle(topic: string, sourceType: string): string {
+  const cleanTopic = topic.trim();
+  
+  switch (sourceType) {
+    case 'pdf':
+      return `${cleanTopic} MCQs (PDF)`;
+    case 'youtube':
+      return `${cleanTopic} MCQs (Video)`;
+    default:
+      return `${cleanTopic} MCQs`;
+  }
 }
 
 export async function POST(req: Request, { params }: RouteContext) {
@@ -115,6 +196,9 @@ export async function POST(req: Request, { params }: RouteContext) {
       );
       title = updated?.title ?? body.title.trim();
     }
+
+    // Check if this is an MCQ request
+    const mcqRequest = detectMcqRequest(content);
 
     const userMessage = await addChatMessage(thread.id, 'user', content);
 
@@ -187,10 +271,18 @@ export async function POST(req: Request, { params }: RouteContext) {
             return;
           }
 
+          let finalReply = reply;
+
+          // If this is an MCQ request, provide simple link to MCQ section
+          if (mcqRequest.isMcqRequest && mcqRequest.topic) {
+            const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
+            finalReply += mcqLink;
+          }
+
           const assistantMessage = await addChatMessage(
             thread.id,
             'assistant',
-            reply
+            finalReply
           );
 
           controller.enqueue(
