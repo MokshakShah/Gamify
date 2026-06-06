@@ -149,6 +149,33 @@ export async function addMcqQuestions(
   return data ?? [];
 }
 
+export async function updateMcqSetTitle(
+  clerkUserId: string,
+  setId: string,
+  newTitle: string
+): Promise<McqSet | null> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('mcq_sets')
+    .update({ 
+      title: newTitle,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', setId)
+    .eq('clerk_user_id', clerkUserId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[supabase] updateMcqSetTitle failed:', error);
+    return null;
+  }
+
+  return data;
+}
+
 export async function deleteMcqSet(
   clerkUserId: string,
   setId: string

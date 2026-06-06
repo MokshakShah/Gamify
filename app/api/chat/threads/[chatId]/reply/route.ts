@@ -49,7 +49,7 @@ function buildSystemPrompt(
     'If the user asks for MCQs, multiple choice questions, quiz questions, or any form of questions:',
     '- NEVER generate actual questions in this chat',
     '- NEVER write out question text, options A/B/C/D, or answers',
-    '- Simply say "MCQs can be generated in the MCQ section" and redirect them',
+    '- Simply say "MCQs are generated in the MCQ section" and redirect them',
     '- Do NOT create any quiz content in this conversation',
     '',
     'Examples of what NOT to do:',
@@ -94,19 +94,19 @@ function streamEvent(event: string, payload: unknown): string {
 
 function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: string; count?: number } {
   const lowerContent = content.toLowerCase();
-  
+
   // MCQ keywords
   const mcqKeywords = [
     'mcq', 'mcqs', 'multiple choice', 'quiz questions', 'questions',
     'generate questions', 'create questions', 'make questions', 'quiz'
   ];
-  
+
   const isMcqRequest = mcqKeywords.some(keyword => lowerContent.includes(keyword));
-  
+
   if (!isMcqRequest) {
     return { isMcqRequest: false };
   }
-  
+
   // Extract count (default to 10, max 15)
   let count = 10;
   const countMatch = content.match(/(\d+)\s*(?:mcq|questions?|quiz)/i);
@@ -116,16 +116,16 @@ function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: str
       count = Math.min(requestedCount, 15);
     }
   }
-  
+
   // Extract topic - look for common patterns
   let topic = '';
-  
+
   // Pattern: "MCQs on [topic]" or "questions about [topic]"
   const onPattern = content.match(/(?:mcqs?|questions?|quiz).*?(?:on|about|for)\s+(.+?)(?:\s|$|\.|\?|!)/i);
   if (onPattern) {
     topic = onPattern[1].trim();
   }
-  
+
   // Pattern: "[topic] MCQs" or "[topic] questions"
   if (!topic) {
     const beforePattern = content.match(/(.+?)\s+(?:mcqs?|questions?|quiz)/i);
@@ -137,26 +137,123 @@ function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: str
       }
     }
   }
-  
+
   // If no specific topic found, check for "this PDF" or "this document"
   if (!topic && (lowerContent.includes('this pdf') || lowerContent.includes('this document'))) {
     topic = 'document content';
   }
-  
+
   return { isMcqRequest: true, topic: topic || 'general knowledge', count };
 }
 
-function generateSetTitle(topic: string, sourceType: string): string {
-  const cleanTopic = topic.trim();
-  
+async function generateIntelligentTitle(
+  userMessage: string,
+  context?: DeepDiveContext | null,
+  pdfChunks?: ChatAttachmentChunkRow[]
+): Promise<string> {
+  try {
+    const groq = getGroq();
+
+    // Build context for title generation
+    let contextInfo = '';
+    if (context) {
+      contextInfo = `Video context: "${context.title}" about ${context.topic}`;
+    } else if (pdfChunks && pdfChunks.length > 0) {
+      contextInfo = 'PDF document content available';
+    }
+
+    const prompt = `Based on this user request and context, generate a concise, descriptive title (max 50 characters) for an MCQ quiz set.
+
+User request: "${userMessage}"
+${contextInfo ? `Context: ${contextInfo}` : ''}
+
+The title should:
+- Be specific and descriptive
+- Indicate the main topic or subject
+- Be suitable for a quiz/study set
+- NOT include "MCQ" or "Quiz" in the title (this will be added automatically)
+- Be clear and helpful for later reference
+
+Examples:
+- "Cure Clustering Algorithms"
+- "Machine Learning Basics" 
+- "Photosynthesis Process"
+- "JavaScript Promises"
+
+Generate only the title, nothing else:`;
+
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.3,
+      max_tokens: 50,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at creating concise, descriptive titles for educational content. Generate clear, specific titles that help users identify their study materials.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+    });
+
+    const generatedTitle = completion.choices[0]?.message?.content?.trim();
+    if (generatedTitle && generatedTitle.length > 0 && generatedTitle.length <= 50) {
+      return generatedTitle;
+    }
+  } catch (error) {
+    console.error('Title generation failed:', error);
+  }
+
+  // Fallback to simple extraction
+  return extractSimpleTitle(userMessage, context);
+}
+
+function extractSimpleTitle(userMessage: string, context?: DeepDiveContext | null): string {
+  // If we have context from video, try to use that
+  if (context?.topic) {
+    return context.topic;
+  }
+
+  // Try to extract a meaningful topic from the user message
+  const cleanMessage = userMessage.toLowerCase().trim();
+
+  // Remove common MCQ request words
+  const cleaned = cleanMessage
+    .replace(/\b(mcq|mcqs|multiple choice|quiz|questions?|generate|create|make|give me|about|on)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (cleaned.length > 0 && cleaned.length <= 50) {
+    // Capitalize first letter of each word
+    return cleaned.replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+  // Last resort fallback
+  return 'Study Questions';
+}
+
+function formatSetTitle(title: string, sourceType: string): string {
+  const maxLength = 60;
+  let suffix = '';
+
   switch (sourceType) {
     case 'pdf':
-      return `${cleanTopic} MCQs (PDF)`;
+      suffix = ' (PDF)';
+      break;
     case 'youtube':
-      return `${cleanTopic} MCQs (Video)`;
+      suffix = ' (Video)';
+      break;
     default:
-      return `${cleanTopic} MCQs`;
+      suffix = '';
   }
+
+  const baseTitle = title.length + suffix.length > maxLength
+    ? title.substring(0, maxLength - suffix.length - 3) + '...'
+    : title;
+
+  return `${baseTitle}${suffix}`;
 }
 
 export async function POST(req: Request, { params }: RouteContext) {
@@ -289,7 +386,7 @@ export async function POST(req: Request, { params }: RouteContext) {
               // Determine source type
               let sourceType: 'topic' | 'pdf' | 'youtube' = 'topic';
               let sourceId: string | undefined;
-              
+
               if (body.context) {
                 sourceType = 'youtube';
                 sourceId = body.context.summaryId;
@@ -305,10 +402,17 @@ export async function POST(req: Request, { params }: RouteContext) {
               );
 
               if (mcqQuestions.length > 0) {
+                // Generate intelligent title based on conversation context
+                const intelligentTitle = await generateIntelligentTitle(
+                  content,
+                  body.context,
+                  pdfChunks
+                );
+
                 // Create MCQ set in database
                 const mcqSet = await createMcqSet(
                   userId,
-                  generateSetTitle(mcqRequest.topic, sourceType),
+                  formatSetTitle(intelligentTitle, sourceType),
                   mcqRequest.topic,
                   sourceType,
                   sourceId

@@ -5,6 +5,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { PanelShell } from '@/components/dashboard/PanelShell';
 import { McqSetCard } from '@/components/dashboard/McqSetCard';
 import { Loader2, Plus, Sparkles } from 'lucide-react';
+import { mcqCache } from '@/lib/cache/user-cache';
 
 type McqSet = {
   id: string;
@@ -21,10 +22,25 @@ function McqSetList({ userId }: { userId: string }) {
   useEffect(() => {
     const fetchMcqSets = async () => {
       try {
+        // Try to get from cache first
+        const cachedMcqSets = await mcqCache.getMcqSet(userId, 'list');
+        
+        if (cachedMcqSets) {
+          console.log('MCQ sets loaded from cache');
+          setMcqSets(cachedMcqSets);
+          setLoading(false);
+          return;
+        }
+
+        // If not in cache, fetch from API
+        console.log('MCQ sets not in cache, fetching from API');
         const res = await fetch('/api/mcq/sets');
         if (res.ok) {
           const data = await res.json();
           setMcqSets(data.mcqSets || []);
+          
+          // Cache the result for future use (5 minutes TTL)
+          await mcqCache.setMcqSet(userId, 'list', data.mcqSets || []);
         }
       } catch (error) {
         console.error('Failed to fetch MCQ sets:', error);
@@ -34,13 +50,18 @@ function McqSetList({ userId }: { userId: string }) {
     };
 
     fetchMcqSets();
-  }, []);
+  }, [userId]);
 
   const deleteMcqSet = async (setId: string) => {
     try {
       const res = await fetch(`/api/mcq/sets/${setId}`, { method: 'DELETE' });
       if (res.ok) {
+        // Update local state
         setMcqSets(prev => prev.filter(set => set.id !== setId));
+        
+        // Invalidate cache for both the list and the specific MCQ set
+        await mcqCache.invalidateMcqSet(userId, 'list');
+        await mcqCache.invalidateMcqSet(userId, setId);
       }
     } catch (error) {
       console.error('Failed to delete MCQ set:', error);
@@ -116,7 +137,9 @@ export default function McqPage() {
         setShowForm(false);
         setTopic('');
         setCount(10);
-        // Force refresh by reloading the page
+        
+        // Invalidate MCQ sets list cache and reload
+        await mcqCache.invalidateMcqSet(userId!, 'list');
         window.location.reload();
       } else {
         const error = await res.json();

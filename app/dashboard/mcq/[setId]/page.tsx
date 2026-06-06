@@ -1,11 +1,12 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle, Star, StarOff } from 'lucide-react';
 import { PanelShell } from '@/components/dashboard/PanelShell';
+import { mcqCache, flashcardCache } from '@/lib/cache/user-cache';
 
 type McqQuestion = {
   id: string;
@@ -37,17 +38,41 @@ type Answer = {
 export default function McqSetPage() {
   const { userId, isLoaded } = useAuth();
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const setId = params.setId as string;
+
+  // URL state management
+  const isResultsMode = searchParams.get('results') === 'true';
+  const urlScore = searchParams.get('score');
+  const urlAnswers = searchParams.get('answers');
 
   const [mcqSet, setMcqSet] = useState<McqSet | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [selectedAnswer, setSelectedAnswer] = useState<string>('');
-  const [showResults, setShowResults] = useState(false);
-  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [showResults, setShowResults] = useState(isResultsMode);
+  const [quizCompleted, setQuizCompleted] = useState(isResultsMode);
   const [showExplanation, setShowExplanation] = useState(false);
   const [currentQuestionAnswered, setCurrentQuestionAnswered] = useState(false);
+  const [flashcardStatuses, setFlashcardStatuses] = useState<Record<string, boolean>>({});
+  const [loadingFlashcard, setLoadingFlashcard] = useState<string | null>(null);
+
+  // Restore answers from URL if available
+  useEffect(() => {
+    if (isResultsMode && urlAnswers && urlScore && mcqSet) {
+      try {
+        const decodedAnswers = JSON.parse(decodeURIComponent(urlAnswers));
+        setAnswers(decodedAnswers);
+        setCurrentQuestion(mcqSet.questions.length - 1);
+      } catch (error) {
+        console.error('Failed to parse URL answers:', error);
+        // If URL is corrupted, redirect to start
+        router.replace(`/dashboard/mcq/${setId}`);
+      }
+    }
+  }, [isResultsMode, urlAnswers, urlScore, mcqSet, setId, router]);
 
   useEffect(() => {
     if (!isLoaded || !userId || !setId) {
@@ -57,10 +82,96 @@ export default function McqSetPage() {
 
     const fetchMcqSet = async () => {
       try {
+        // Try to get from cache first
+        const cachedMcqSet = await mcqCache.getMcqSet(userId, setId);
+        
+        if (cachedMcqSet) {
+          console.log('MCQ set loaded from cache');
+          setMcqSet(cachedMcqSet);
+          
+          // Load flashcard statuses from cache
+          if (cachedMcqSet.questions) {
+            const statuses: Record<string, boolean> = {};
+            
+            // Try to get flashcard statuses from cache first
+            const cachePromises = cachedMcqSet.questions.map(async (question: McqQuestion) => {
+              const cachedStatus = await flashcardCache.getFlashcardStatus(userId, question.id);
+              if (cachedStatus !== null) {
+                statuses[question.id] = cachedStatus;
+                return true; // Found in cache
+              }
+              return false; // Not in cache
+            });
+            
+            const cacheResults = await Promise.all(cachePromises);
+            
+            // For questions not in cache, fetch from API
+            const uncachedQuestions = cachedMcqSet.questions.filter((_, index) => !cacheResults[index]);
+            
+            if (uncachedQuestions.length > 0) {
+              await Promise.all(
+                uncachedQuestions.map(async (question: McqQuestion) => {
+                  try {
+                    const flashcardRes = await fetch(`/api/flashcards/${question.id}`);
+                    if (flashcardRes.ok) {
+                      const flashcardData = await flashcardRes.json();
+                      statuses[question.id] = flashcardData.isInFlashcards;
+                      // Cache the result
+                      await flashcardCache.setFlashcardStatus(userId, question.id, flashcardData.isInFlashcards);
+                    } else {
+                      statuses[question.id] = false;
+                      await flashcardCache.setFlashcardStatus(userId, question.id, false);
+                    }
+                  } catch (error) {
+                    console.error('Failed to fetch flashcard status:', error);
+                    statuses[question.id] = false;
+                    await flashcardCache.setFlashcardStatus(userId, question.id, false);
+                  }
+                })
+              );
+            }
+            
+            setFlashcardStatuses(statuses);
+          }
+          setLoading(false);
+          return;
+        }
+
+        // If not in cache, fetch from API
+        console.log('MCQ set not in cache, fetching from API');
         const res = await fetch(`/api/mcq/sets/${setId}`);
         if (res.ok) {
           const data = await res.json();
           setMcqSet(data.mcqSet);
+          
+          // Cache the MCQ set for future use
+          await mcqCache.setMcqSet(userId, setId, data.mcqSet);
+          
+          // Fetch and cache flashcard statuses for all questions
+          if (data.mcqSet.questions) {
+            const statuses: Record<string, boolean> = {};
+            await Promise.all(
+              data.mcqSet.questions.map(async (question: McqQuestion) => {
+                try {
+                  const flashcardRes = await fetch(`/api/flashcards/${question.id}`);
+                  if (flashcardRes.ok) {
+                    const flashcardData = await flashcardRes.json();
+                    statuses[question.id] = flashcardData.isInFlashcards;
+                    // Cache the result
+                    await flashcardCache.setFlashcardStatus(userId, question.id, flashcardData.isInFlashcards);
+                  } else {
+                    statuses[question.id] = false;
+                    await flashcardCache.setFlashcardStatus(userId, question.id, false);
+                  }
+                } catch (error) {
+                  console.error('Failed to fetch flashcard status:', error);
+                  statuses[question.id] = false;
+                  await flashcardCache.setFlashcardStatus(userId, question.id, false);
+                }
+              })
+            );
+            setFlashcardStatuses(statuses);
+          }
         }
       } catch (error) {
         console.error('Failed to fetch MCQ set:', error);
@@ -131,7 +242,8 @@ export default function McqSetPage() {
         isCorrect,
       };
 
-      setAnswers(prev => [...prev, newAnswer]);
+      const updatedAnswers = [...answers, newAnswer];
+      setAnswers(updatedAnswers);
       setSelectedAnswer('');
       setCurrentQuestionAnswered(false);
       setShowExplanation(false);
@@ -139,6 +251,14 @@ export default function McqSetPage() {
       if (currentQuestion + 1 < mcqSet.questions.length) {
         setCurrentQuestion(prev => prev + 1);
       } else {
+        // Quiz completed - update URL with results
+        const finalScore = updatedAnswers.filter(a => a.isCorrect).length;
+        const encodedAnswers = encodeURIComponent(JSON.stringify(updatedAnswers));
+        
+        // Update URL to include results state
+        const resultsUrl = `/dashboard/mcq/${setId}?results=true&score=${finalScore}&answers=${encodedAnswers}`;
+        router.replace(resultsUrl);
+        
         setQuizCompleted(true);
         setShowResults(true);
       }
@@ -149,12 +269,50 @@ export default function McqSetPage() {
     setShowExplanation(true);
   };
 
+  const toggleFlashcard = async (questionId: string) => {
+    if (loadingFlashcard === questionId) return;
+    
+    setLoadingFlashcard(questionId);
+    const isCurrentlyInFlashcards = flashcardStatuses[questionId] || false;
+    
+    try {
+      const method = isCurrentlyInFlashcards ? 'DELETE' : 'POST';
+      const res = await fetch(`/api/flashcards/${questionId}`, { method });
+      
+      if (res.ok) {
+        const newStatus = !isCurrentlyInFlashcards;
+        
+        // Update local state
+        setFlashcardStatuses(prev => ({
+          ...prev,
+          [questionId]: newStatus
+        }));
+        
+        // Update cache
+        await flashcardCache.setFlashcardStatus(userId!, questionId, newStatus);
+        
+        // Invalidate flashcards list cache to refresh counts/lists
+        await flashcardCache.invalidateFlashcards(userId!);
+      } else {
+        console.error('Failed to toggle flashcard');
+      }
+    } catch (error) {
+      console.error('Failed to toggle flashcard:', error);
+    } finally {
+      setLoadingFlashcard(null);
+    }
+  };
+
   const restartQuiz = () => {
+    // Clear URL parameters and reset state
+    router.replace(`/dashboard/mcq/${setId}`);
     setCurrentQuestion(0);
     setAnswers([]);
     setSelectedAnswer('');
     setShowResults(false);
     setQuizCompleted(false);
+    setShowExplanation(false);
+    setCurrentQuestionAnswered(false);
   };
 
   if (showResults) {
@@ -204,7 +362,25 @@ export default function McqSetPage() {
                       {index + 1}
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium text-slate-900">{question.question}</p>
+                      <div className="flex items-start justify-between mb-3">
+                        <p className="font-medium text-slate-900 flex-1">{question.question}</p>
+                        <button
+                          onClick={() => toggleFlashcard(question.id)}
+                          disabled={loadingFlashcard === question.id}
+                          className={`flex-shrink-0 ml-4 p-1.5 rounded-lg transition ${
+                            flashcardStatuses[question.id]
+                              ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                              : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
+                          } ${loadingFlashcard === question.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          title={flashcardStatuses[question.id] ? 'Remove from flashcards' : 'Add to flashcards'}
+                        >
+                          {flashcardStatuses[question.id] ? (
+                            <Star className="h-4 w-4 fill-current" />
+                          ) : (
+                            <StarOff className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                       <div className="mt-3 space-y-2">
                         {options.map((option) => {
                           const isCorrect = option.key === question.correct_answer;
@@ -275,9 +451,27 @@ export default function McqSetPage() {
 
         {/* Question */}
         <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-6">
-            {currentQ.question}
-          </h2>
+          <div className="flex items-start justify-between mb-6">
+            <h2 className="text-lg font-semibold text-slate-900 flex-1">
+              {currentQ.question}
+            </h2>
+            <button
+              onClick={() => toggleFlashcard(currentQ.id)}
+              disabled={loadingFlashcard === currentQ.id}
+              className={`flex-shrink-0 ml-4 p-2 rounded-lg transition ${
+                flashcardStatuses[currentQ.id]
+                  ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                  : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
+              } ${loadingFlashcard === currentQ.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={flashcardStatuses[currentQ.id] ? 'Remove from flashcards' : 'Add to flashcards'}
+            >
+              {flashcardStatuses[currentQ.id] ? (
+                <Star className="h-5 w-5 fill-current" />
+              ) : (
+                <StarOff className="h-5 w-5" />
+              )}
+            </button>
+          </div>
 
           <div className="space-y-3">
             {[
