@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { PanelShell } from '@/components/dashboard/PanelShell';
 import { McqSetCard } from '@/components/dashboard/McqSetCard';
 import { Loader2, Plus, Sparkles } from 'lucide-react';
@@ -14,21 +14,11 @@ type McqSet = {
   created_at: string;
 };
 
-export default function McqPage() {
-  const { userId, isLoaded } = useAuth();
+function McqSetList({ userId }: { userId: string }) {
   const [mcqSets, setMcqSets] = useState<McqSet[]>([]);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [topic, setTopic] = useState('');
-  const [count, setCount] = useState(10);
 
   useEffect(() => {
-    if (!isLoaded || !userId) {
-      if (isLoaded) setLoading(false);
-      return;
-    }
-
     const fetchMcqSets = async () => {
       try {
         const res = await fetch('/api/mcq/sets');
@@ -44,7 +34,67 @@ export default function McqPage() {
     };
 
     fetchMcqSets();
-  }, [userId, isLoaded]);
+  }, []);
+
+  const deleteMcqSet = async (setId: string) => {
+    try {
+      const res = await fetch(`/api/mcq/sets/${setId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setMcqSets(prev => prev.filter(set => set.id !== setId));
+      }
+    } catch (error) {
+      console.error('Failed to delete MCQ set:', error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
+            <div className="h-20 bg-slate-200 rounded" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (mcqSets.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+        <Plus className="mx-auto h-12 w-12 text-slate-400" />
+        <h3 className="mt-4 text-sm font-semibold text-slate-900">No MCQ sets yet</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          Generate your first MCQ set using the button above, or ask the AI chatbot with phrases like:
+        </p>
+        <ul className="mt-3 space-y-1 text-sm text-slate-500">
+          <li>"Generate 5 MCQs on machine learning"</li>
+          <li>"Create quiz questions for this PDF"</li>
+          <li>"Make MCQs about React hooks"</li>
+        </ul>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {mcqSets.map((set) => (
+        <McqSetCard
+          key={set.id}
+          mcqSet={set}
+          onDelete={() => deleteMcqSet(set.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+export default function McqPage() {
+  const { userId, isLoaded } = useAuth();
+  const [generating, setGenerating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [count, setCount] = useState(10);
 
   const handleGenerateMcqs = async () => {
     if (!topic.trim() || generating) return;
@@ -63,10 +113,11 @@ export default function McqPage() {
 
       if (res.ok) {
         const data = await res.json();
-        setMcqSets(prev => [data.mcqSet, ...prev]);
         setShowForm(false);
         setTopic('');
         setCount(10);
+        // Force refresh by reloading the page
+        window.location.reload();
       } else {
         const error = await res.json();
         alert(error.error || 'Failed to generate MCQs');
@@ -79,18 +130,7 @@ export default function McqPage() {
     }
   };
 
-  const deleteMcqSet = async (setId: string) => {
-    try {
-      const res = await fetch(`/api/mcq/sets/${setId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setMcqSets(prev => prev.filter(set => set.id !== setId));
-      }
-    } catch (error) {
-      console.error('Failed to delete MCQ set:', error);
-    }
-  };
-
-  if (!isLoaded || loading) {
+  if (!isLoaded) {
     return (
       <PanelShell
         title="MCQ"
@@ -98,6 +138,19 @@ export default function McqPage() {
       >
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        </div>
+      </PanelShell>
+    );
+  }
+
+  if (!userId) {
+    return (
+      <PanelShell
+        title="MCQ"
+        description="Practice quizzes with timed sessions and scoring."
+      >
+        <div className="text-center py-12">
+          <p className="text-slate-600">Please sign in to access MCQs.</p>
         </div>
       </PanelShell>
     );
@@ -185,31 +238,18 @@ export default function McqPage() {
           </div>
         )}
 
-        {/* MCQ Sets Grid */}
-        {mcqSets.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-            <Plus className="mx-auto h-12 w-12 text-slate-400" />
-            <h3 className="mt-4 text-sm font-semibold text-slate-900">No MCQ sets yet</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Generate your first MCQ set using the button above, or ask the AI chatbot with phrases like:
-            </p>
-            <ul className="mt-3 space-y-1 text-sm text-slate-500">
-              <li>"Generate 5 MCQs on machine learning"</li>
-              <li>"Create quiz questions for this PDF"</li>
-              <li>"Make MCQs about React hooks"</li>
-            </ul>
-          </div>
-        ) : (
+        {/* MCQ Sets Grid with Suspense */}
+        <Suspense fallback={
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {mcqSets.map((set) => (
-              <McqSetCard
-                key={set.id}
-                mcqSet={set}
-                onDelete={() => deleteMcqSet(set.id)}
-              />
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
+                <div className="h-20 bg-slate-200 rounded" />
+              </div>
             ))}
           </div>
-        )}
+        }>
+          <McqSetList userId={userId} />
+        </Suspense>
       </div>
     </PanelShell>
   );

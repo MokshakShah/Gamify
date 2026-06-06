@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
-import { auth, currentUser } from '@clerk/nextjs/server';
+import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { DashboardAuthGate } from '@/components/dashboard/DashboardAuthGate';
 import { ProfileSync } from '@/components/dashboard/ProfileSync';
 import { Topbar } from '@/components/dashboard/Topbar';
-import { upsertClerkProfile } from '@/lib/supabase/sync-clerk-profile';
 
 export const metadata: Metadata = {
   title: 'Dashboard - Gamify',
@@ -22,20 +21,7 @@ export default async function DashboardLayout({
     redirect('/');
   }
 
-  let user = null;
-  try {
-    user = await currentUser();
-  } catch (err) {
-    console.error('[dashboard] Clerk currentUser() failed:', err);
-  }
-  if (user) {
-    try {
-      await upsertClerkProfile(user);
-    } catch (err) {
-      console.error('[dashboard] Clerk → Supabase profile sync failed:', err);
-    }
-  }
-
+  // Remove blocking operations - ProfileSync will handle user sync in client
   return (
     <DashboardAuthGate>
       <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
