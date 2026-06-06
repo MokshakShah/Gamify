@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { DashboardAuthGate } from '@/components/dashboard/DashboardAuthGate';
 import { ProfileSync } from '@/components/dashboard/ProfileSync';
 import { Topbar } from '@/components/dashboard/Topbar';
+import { RouteProgress } from '@/components/dashboard/RouteProgress';
 
 export const metadata: Metadata = {
   title: 'Dashboard - Gamify',
@@ -24,6 +25,7 @@ export default async function DashboardLayout({
   // Remove blocking operations - ProfileSync will handle user sync in client
   return (
     <DashboardAuthGate>
+      <RouteProgress />
       <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
         <ProfileSync />
         <Topbar />

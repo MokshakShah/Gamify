@@ -1,63 +1,36 @@
 'use client';
 
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { useEffect, useRef } from 'react';
+import { upsertClerkProfile } from '@/lib/supabase/sync-clerk-profile';
 
-const MAX_ATTEMPTS = 3;
-
-/**
- * Mirrors the signed-in Clerk user to Supabase `profiles` via /api/user/sync.
- * Retries on failure; resets when the user signs out so the next login syncs again.
- */
 export function ProfileSync() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const synced = useRef(false);
-  const attempts = useRef(0);
+  const { isLoaded: authLoaded, userId } = useAuth();
+  const { user, isLoaded: userLoaded } = useUser();
+  const syncedRef = useRef(false);
 
   useEffect(() => {
-    if (!isLoaded) return;
-
-    if (!isSignedIn) {
-      synced.current = false;
-      attempts.current = 0;
+    // Only sync once per session and don't block navigation
+    if (!authLoaded || !userLoaded || !userId || !user || syncedRef.current) {
       return;
     }
 
-    if (synced.current) return;
-
-    let cancelled = false;
-
-    const runSync = async () => {
-      if (cancelled || synced.current) return;
-      if (attempts.current >= MAX_ATTEMPTS) return;
-
-      attempts.current += 1;
-
-      const res = await fetch('/api/user/sync', { method: 'POST' });
-      if (cancelled) return;
-
-      if (res.ok) {
-        synced.current = true;
-        return;
-      }
-
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      console.error(
-        '[ProfileSync]',
-        body.error ?? `Sync failed (${res.status})`
-      );
-
-      if (attempts.current < MAX_ATTEMPTS && !cancelled) {
-        window.setTimeout(() => void runSync(), 2000);
+    syncedRef.current = true;
+    
+    // Run profile sync in background without blocking
+    const syncProfile = async () => {
+      try {
+        await upsertClerkProfile(user);
+      } catch (error) {
+        console.error('[ProfileSync] Profile sync failed:', error);
+        // Allow retry on next navigation
+        syncedRef.current = false;
       }
     };
 
-    void runSync();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isLoaded, isSignedIn]);
+    // Use setTimeout to ensure this doesn't block initial render
+    setTimeout(syncProfile, 0);
+  }, [authLoaded, userLoaded, userId, user]);
 
   return null;
 }
