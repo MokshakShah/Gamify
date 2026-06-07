@@ -2,7 +2,7 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useEffect, useState } from 'react';
-import { Star, BookOpen, Calendar, ChevronLeft, ChevronRight, RotateCcw, Trash2 } from 'lucide-react';
+import { Star, BookOpen, ChevronLeft, ChevronRight, RotateCcw, Trash2, Calendar } from 'lucide-react';
 import { PanelShell } from '@/components/dashboard/PanelShell';
 import { flashcardCache } from '@/lib/cache/user-cache';
 
@@ -33,6 +33,115 @@ type FlashcardStats = {
   addedToday: number;
   addedThisWeek: number;
 };
+
+type FlashcardItemProps = {
+  question: string;
+  answer: string;
+  explanation: string;
+  setTitle: string;
+  setTopic: string;
+  onRemove: () => void;
+};
+
+function FlashcardItem({ question, answer, explanation, setTitle, setTopic, onRemove }: FlashcardItemProps) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="relative group rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md overflow-hidden">
+      {/* Question - Always Visible */}
+      <div className="p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Star className="h-4 w-4 text-yellow-500 fill-current" />
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+              Flashcard
+            </span>
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="opacity-0 group-hover:opacity-100 transition p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
+            title="Remove from flashcards"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="font-semibold text-slate-900 line-clamp-4 text-sm leading-relaxed">
+            {question}
+          </h3>
+          
+          <div className="text-xs text-slate-600 space-y-1">
+            <p className="font-medium">{setTitle}</p>
+            <p className="text-slate-500">{setTopic}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Answer Section - Expandable */}
+      <div 
+        className={`transition-all duration-500 ease-in-out overflow-hidden ${
+          isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div className="px-6 pb-6 space-y-4 bg-gradient-to-br from-green-50 to-emerald-50 border-t border-green-200">
+          {/* Answer Revealed Header */}
+          <div className="flex items-center gap-2 pt-4">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-xs font-medium text-green-700 uppercase tracking-wide">
+              Answer 
+            </span>
+          </div>
+
+          {/* Correct Answer */}
+          <div className="bg-white rounded-lg p-4 border-l-4 border-green-400 shadow-sm">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center">
+                <span className="text-green-700 font-bold text-xs">✓</span>
+              </div>
+              <span className="text-sm font-semibold text-green-800">Correct Answer</span>
+            </div>
+            <p className="text-sm text-slate-900 font-medium leading-relaxed">{answer}</p>
+          </div>
+
+          {/* Explanation */}
+          <div className="bg-white rounded-lg p-4 border-l-4 border-blue-400 shadow-sm">
+            <h4 className="text-xs font-semibold text-blue-900 mb-2 uppercase tracking-wide flex items-center gap-1">
+              <span>💡</span>
+              <span>Explanation</span>
+            </h4>
+            <p className="text-xs text-slate-700 leading-relaxed">{explanation}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Toggle Button */}
+      <div className="px-6 pb-6">
+        {!isOpen ? (
+          <button
+            onClick={() => setIsOpen(true)}
+            className="w-60 text-center py-3 rounded-lg bg-blue-50 border border-blue-300 hover:bg-blue-200 transition"
+          >
+            <div className="flex gap-2 text-sm text-blue-600 font-medium">
+              <span>📨</span>
+              <span>Click to reveal answer</span>
+            </div>
+          </button>
+        ) : (
+          <button
+            onClick={() => setIsOpen(false)}
+            className="w-full text-center  rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 transition"
+          >
+            <span className="text-xs text-slate-600 font-medium">Close Answer</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function FlashcardsPage() {
   const { userId, isLoaded } = useAuth();
@@ -228,7 +337,7 @@ export default function FlashcardsPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-8 min-h-[400px] flex flex-col">
             <div className="flex-1">
               <div className="flex items-start justify-between mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 flex-1">
+                <h2 className="text-xl font-semibold text-slate-900 flex-1 leading-relaxed">
                   {currentFlashcard.question.question}
                 </h2>
                 <button
@@ -241,42 +350,37 @@ export default function FlashcardsPage() {
               </div>
 
               {!showAnswer ? (
-                <div className="space-y-3">
-                  {options.map((option) => (
-                    <div
-                      key={option.key}
-                      className="p-4 rounded-lg border border-slate-200 bg-slate-50"
-                    >
-                      <span className="font-medium text-slate-700">{option.key})</span> {option.text}
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center p-8">
+                    <div className="inline-flex items-center gap-3 text-lg text-blue-600 font-medium bg-blue-50 px-6 py-3 rounded-full mb-4">
+                      <span className="text-2xl">📨</span>
+                      <span>Think about your answer...</span>
                     </div>
-                  ))}
+                    <p className="text-sm text-slate-500">Click "Show Answer" when you're ready</p>
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {/* Options with correct answer highlighted */}
-                  <div className="space-y-3">
-                    {options.map((option) => {
-                      const isCorrect = option.key === currentFlashcard.question.correct_answer;
-                      return (
-                        <div
-                          key={option.key}
-                          className={`p-4 rounded-lg border ${
-                            isCorrect
-                              ? 'bg-green-50 border-green-200 text-green-900'
-                              : 'bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                        >
-                          <span className="font-medium">{option.key})</span> {option.text}
-                          {isCorrect && <span className="ml-2 text-green-600 font-semibold">✓ Correct</span>}
-                        </div>
-                      );
-                    })}
+                <div className="space-y-6">
+                  {/* Correct Answer */}
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border-l-4 border-green-400">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                        <span className="text-green-700 font-bold">✓</span>
+                      </div>
+                      <span className="text-lg font-semibold text-green-800">Correct Answer</span>
+                    </div>
+                    <p className="text-lg text-slate-900 font-medium leading-relaxed">
+                      {currentFlashcard.question[`option_${currentFlashcard.question.correct_answer.toLowerCase()}` as keyof typeof currentFlashcard.question] as string}
+                    </p>
                   </div>
 
                   {/* Explanation */}
-                  <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
-                    <h4 className="font-semibold text-blue-900 mb-2">Explanation:</h4>
-                    <p className="text-sm text-blue-800">{currentFlashcard.question.explanation}</p>
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-400">
+                    <h4 className="font-semibold text-blue-900 mb-3 flex items-center gap-2 text-lg">
+                      <span className="text-xl">💡</span>
+                      <span>Explanation</span>
+                    </h4>
+                    <p className="text-slate-700 leading-relaxed">{currentFlashcard.question.explanation}</p>
                   </div>
                 </div>
               )}
@@ -341,7 +445,7 @@ export default function FlashcardsPage() {
       description="Review your favorite questions for quick revision."
     >
       <div className="space-y-6">
-        {/* Stats */}
+        Stats
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="flex items-center gap-3">
@@ -395,48 +499,23 @@ export default function FlashcardsPage() {
         </div>
 
         {/* Flashcards Grid */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {flashcards.map((flashcard) => (
-            <div key={flashcard.id} className="group rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Star className="h-4 w-4 text-yellow-500 fill-current" />
-                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-                    Flashcard
-                  </span>
-                </div>
-                <button
-                  onClick={() => removeFlashcard(flashcard.question.id)}
-                  className="opacity-0 group-hover:opacity-100 transition p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
-                  title="Remove from flashcards"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="font-semibold text-slate-900 line-clamp-3 text-sm">
-                  {flashcard.question.question}
-                </h3>
-                
-                <div className="text-xs text-slate-600">
-                  <p className="font-medium">{flashcard.mcq_set_title}</p>
-                  <p>{flashcard.mcq_set_topic}</p>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1 text-xs text-slate-500">
-                    <Calendar className="h-3 w-3" />
-                    {formatDate(flashcard.added_at)}
-                  </div>
-                  
-                  <div className="text-xs font-semibold text-blue-600">
-                    Answer: {flashcard.question.correct_answer}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:items-start">
+          {flashcards.map((flashcard) => {
+            const correctOption = flashcard.question.correct_answer;
+            const correctText = flashcard.question[`option_${correctOption.toLowerCase()}` as keyof typeof flashcard.question] as string;
+            
+            return (
+              <FlashcardItem
+                key={flashcard.id}
+                question={flashcard.question.question}
+                answer={correctText}
+                explanation={flashcard.question.explanation}
+                setTitle={flashcard.mcq_set_title}
+                setTopic={flashcard.mcq_set_topic}
+                onRemove={() => removeFlashcard(flashcard.question.id)}
+              />
+            );
+          })}
         </div>
       </div>
     </PanelShell>
