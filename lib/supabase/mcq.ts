@@ -115,6 +115,132 @@ export async function createMcqSet(
   return data;
 }
 
+// Smart topic similarity matching
+function calculateTopicSimilarity(topic1: string, topic2: string): number {
+  const normalize = (str: string) => str.toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const normalized1 = normalize(topic1);
+  const normalized2 = normalize(topic2);
+
+  // Exact match
+  if (normalized1 === normalized2) return 1.0;
+
+  // Check if one contains the other
+  if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) {
+    return 0.8;
+  }
+
+  // Word-based similarity
+  const words1 = new Set(normalized1.split(' '));
+  const words2 = new Set(normalized2.split(' '));
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+  
+  const similarity = intersection.size / union.size;
+  return similarity;
+}
+
+export async function findSimilarMcqSet(
+  clerkUserId: string,
+  topic: string,
+  sourceType: 'topic' | 'pdf' | 'youtube',
+  similarityThreshold: number = 0.7
+): Promise<McqSet | null> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  // Get all MCQ sets for the user
+  const { data: mcqSets, error } = await supabase
+    .from('mcq_sets')
+    .select('*')
+    .eq('clerk_user_id', clerkUserId)
+    .eq('source_type', sourceType) // Only match same source type
+    .order('created_at', { ascending: false });
+
+  if (error || !mcqSets) {
+    console.error('[supabase] findSimilarMcqSet failed:', error);
+    return null;
+  }
+
+  // Find the most similar set
+  let bestMatch: McqSet | null = null;
+  let bestSimilarity = 0;
+
+  for (const set of mcqSets) {
+    const similarity = calculateTopicSimilarity(topic, set.topic);
+    if (similarity >= similarityThreshold && similarity > bestSimilarity) {
+      bestMatch = set;
+      bestSimilarity = similarity;
+    }
+  }
+
+  return bestMatch;
+}
+
+export async function createOrMergeMcqSet(
+  clerkUserId: string,
+  title: string,
+  topic: string,
+  sourceType: 'topic' | 'pdf' | 'youtube',
+  sourceId?: string
+): Promise<{ mcqSet: McqSet; isNew: boolean; merged?: boolean }> {
+  // Try to find an existing similar set
+  const existingSet = await findSimilarMcqSet(clerkUserId, topic, sourceType);
+
+  if (existingSet) {
+    console.log(`Found similar MCQ set: "${existingSet.topic}" matches "${topic}"`);
+    
+    // Update the existing set's updated_at timestamp
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      await supabase
+        .from('mcq_sets')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', existingSet.id);
+    }
+
+    return {
+      mcqSet: existingSet,
+      isNew: false,
+      merged: true
+    };
+  }
+
+  // No similar set found, create a new one
+  const newSet = await createMcqSet(clerkUserId, title, topic, sourceType, sourceId);
+  
+  if (!newSet) {
+    throw new Error('Failed to create MCQ set');
+  }
+
+  return {
+    mcqSet: newSet,
+    isNew: true,
+    merged: false
+  };
+}
+
+export async function getNextQuestionOrder(mcqSetId: string): Promise<number> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return 1;
+
+  const { data, error } = await supabase
+    .from('mcq_questions')
+    .select('question_order')
+    .eq('mcq_set_id', mcqSetId)
+    .order('question_order', { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return 1;
+  }
+
+  return data[0].question_order + 1;
+}
+
 export async function addMcqQuestions(
   mcqSetId: string,
   questions: Array<{
@@ -125,20 +251,24 @@ export async function addMcqQuestions(
     option_d: string;
     correct_answer: 'A' | 'B' | 'C' | 'D';
     explanation: string; // Now required
-    question_order: number;
+    question_order?: number; // Make optional for auto-ordering
   }>
 ): Promise<McqQuestion[]> {
   const supabase = getSupabaseAdmin();
   if (!supabase) return [];
 
+  // Get the next question order number if not provided
+  let nextOrder = await getNextQuestionOrder(mcqSetId);
+
+  const questionsWithOrder = questions.map((q, index) => ({
+    mcq_set_id: mcqSetId,
+    ...q,
+    question_order: q.question_order ?? (nextOrder + index)
+  }));
+
   const { data, error } = await supabase
     .from('mcq_questions')
-    .insert(
-      questions.map((q) => ({
-        mcq_set_id: mcqSetId,
-        ...q,
-      }))
-    )
+    .insert(questionsWithOrder)
     .select();
 
   if (error) {

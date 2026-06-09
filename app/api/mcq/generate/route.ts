@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { generateMcqQuestions } from '@/lib/groq/generate-mcq';
-import { createMcqSet, addMcqQuestions } from '@/lib/supabase/mcq';
+import { createOrMergeMcqSet, addMcqQuestions } from '@/lib/supabase/mcq';
 import { getYoutubeSummaryById } from '@/lib/supabase/youtube-summaries';
 
 export const dynamic = 'force-dynamic';
@@ -33,14 +33,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Topic is required' }, { status: 400 });
   }
 
-  if (count > 15) {
+  // For YouTube summaries, always generate 15 MCQs
+  let finalCount = count;
+  if (sourceType === 'youtube') {
+    finalCount = 15;
+    console.log('[MCQ Generation] YouTube source detected, generating 15 MCQs automatically');
+  }
+
+  if (finalCount > 15) {
     return NextResponse.json(
       { error: 'Maximum 15 MCQs can be generated at once' },
       { status: 400 }
     );
   }
 
-  if (count < 1) {
+  if (finalCount < 1) {
     return NextResponse.json(
       { error: 'At least 1 MCQ must be generated' },
       { status: 400 }
@@ -58,7 +65,7 @@ export async function POST(req: Request) {
     }
 
     // Generate MCQs
-    const questions = await generateMcqQuestions(topic.trim(), count, mcqContext);
+    const questions = await generateMcqQuestions(topic.trim(), finalCount, mcqContext);
 
     if (questions.length === 0) {
       return NextResponse.json(
@@ -67,8 +74,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // Create MCQ set in database
-    const mcqSet = await createMcqSet(
+    // Create or merge MCQ set intelligently
+    const result = await createOrMergeMcqSet(
       userId,
       generateSetTitle(topic, sourceType),
       topic.trim(),
@@ -76,26 +83,31 @@ export async function POST(req: Request) {
       sourceId
     );
 
-    if (!mcqSet) {
+    if (!result.mcqSet) {
       return NextResponse.json(
         { error: 'Failed to save MCQ set' },
         { status: 500 }
       );
     }
 
-    // Add questions to database
+    // Add questions to database (with proper ordering for merged sets)
     const dbQuestions = await addMcqQuestions(
-      mcqSet.id,
-      questions.map((q, index) => ({
+      result.mcqSet.id,
+      questions.map((q) => ({
         ...q,
-        question_order: index + 1,
+        // Let addMcqQuestions handle auto-ordering
       }))
     );
 
+    // Return success response with merge context
     return NextResponse.json({
-      mcqSet,
+      mcqSet: result.mcqSet,
       questions: dbQuestions,
-      message: `Generated ${questions.length} MCQs for "${topic}"`,
+      isNew: result.isNew,
+      merged: result.merged,
+      message: result.merged 
+        ? `Added ${questions.length} MCQs to existing "${result.mcqSet.title.replace(/\s*\((Video|PDF)\)$/, '')}" set`
+        : `Created new MCQ set with ${questions.length} questions for "${topic}"`,
     });
   } catch (error) {
     console.error('MCQ generation failed:', error);

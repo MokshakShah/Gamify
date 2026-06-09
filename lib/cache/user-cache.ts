@@ -104,7 +104,7 @@ class UserCacheManager {
         if (!item && options.persistent) {
             const storeName = type === 'mcq_sets' ? 'mcq_sets' :
                 type === 'flashcards' ? 'flashcards' : 'flashcard_status';
-            item = await this.getFromIndexedDB<T>(storeName, key);
+            item = (await this.getFromIndexedDB<T>(storeName, key)) || undefined;
 
             // If found in IndexedDB, put it in memory cache for faster access
             if (item) {

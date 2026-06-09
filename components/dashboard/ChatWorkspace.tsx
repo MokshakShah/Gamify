@@ -507,14 +507,16 @@ export function ChatWorkspace({ urlChatId }: ChatWorkspaceProps) {
         if (attachmentsSnapshot.length > 0) {
           setPendingAttachments([]);
         }
-        if (donePayload.title && donePayload.updatedAt) {
+        if (donePayload?.title && donePayload?.updatedAt) {
+          const title = donePayload.title;
+          const updatedAt = donePayload.updatedAt;
           setThreads((prev) =>
             prev.map((t) =>
               t.chatId === chatId
                 ? {
                     ...t,
-                    title: donePayload.title!,
-                    updatedAt: donePayload.updatedAt!,
+                    title,
+                    updatedAt,
                   }
                 : t
             )

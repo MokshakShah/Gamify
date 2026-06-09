@@ -127,12 +127,12 @@ export async function listFlashcardsForUser(
 
   // Transform the data to the expected format
   return data
-    .filter(item => item.mcq_questions && item.mcq_questions.mcq_sets)
+    .filter(item => item.mcq_questions && (item.mcq_questions as any).mcq_sets)
     .map(item => ({
       id: item.id,
       mcq_question_id: item.mcq_question_id,
       added_at: item.added_at,
-      question: item.mcq_questions as McqQuestion,
+      question: item.mcq_questions as any,
       mcq_set_title: (item.mcq_questions as any).mcq_sets.title,
       mcq_set_topic: (item.mcq_questions as any).mcq_sets.topic,
     }));

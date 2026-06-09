@@ -105,7 +105,7 @@ export function McqSetCard({ mcqSet, onDelete }: McqSetCardProps) {
 
         <div className="mt-3">
           <h3 className="font-semibold text-slate-900 line-clamp-2">
-            {mcqSet.title}
+            {mcqSet.title.replace(/\s*\((Video|PDF)\)$/, '')}
           </h3>
           <p className="mt-1 text-sm text-slate-600 line-clamp-2">
             {mcqSet.topic}

@@ -11,7 +11,7 @@ import {
   updateChatThreadTitleByChatId,
 } from '@/lib/supabase/chat';
 import { generateMcqQuestions } from '@/lib/groq/generate-mcq';
-import { createMcqSet, addMcqQuestions } from '@/lib/supabase/mcq';
+import { createOrMergeMcqSet, addMcqQuestions } from '@/lib/supabase/mcq';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,7 +92,7 @@ function streamEvent(event: string, payload: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
-function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: string; count?: number } {
+function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: string; count?: number; isContextual?: boolean } {
   const lowerContent = content.toLowerCase();
 
   // MCQ keywords
@@ -115,6 +115,26 @@ function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: str
     if (requestedCount > 0) {
       count = Math.min(requestedCount, 15);
     }
+  }
+
+  // Check if it's a contextual request (no specific topic mentioned)
+  const contextualPatterns = [
+    /(?:give|generate|create|make)\s*(?:\d+\s*)?(?:more|additional|extra)\s*(?:mcq|questions?|quiz)/i,
+    /(?:\d+\s*)?more\s*(?:mcq|questions?|quiz)/i,
+    /(?:some|few)\s*more\s*(?:mcq|questions?)/i,
+    /(?:add|give me)\s*(?:\d+\s*)?(?:more|additional)\s*(?:mcq|questions?)/i,
+    /(?:pls|please).*(?:more|additional).*(?:mcq|questions?)/i
+  ];
+
+  const isContextual = contextualPatterns.some(pattern => pattern.test(content));
+
+  if (isContextual) {
+    return {
+      isMcqRequest: true,
+      topic: '', // Will be filled from context
+      count,
+      isContextual: true
+    };
   }
 
   // Extract topic - look for common patterns
@@ -143,7 +163,57 @@ function detectMcqRequest(content: string): { isMcqRequest: boolean; topic?: str
     topic = 'document content';
   }
 
-  return { isMcqRequest: true, topic: topic || 'general knowledge', count };
+  return {
+    isMcqRequest: true,
+    topic: topic || 'general knowledge',
+    count,
+    isContextual: false
+  };
+}
+
+async function extractTopicFromChatHistory(messages: any[]): Promise<string | null> {
+  // Look through recent chat messages for MCQ-related topics
+  const recentMessages = messages.slice(-10); // Last 10 messages
+
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const message = recentMessages[i];
+
+    // Skip assistant messages for topic extraction
+    if (message.role === 'assistant') continue;
+
+    const content = message.content.toLowerCase();
+
+    // Look for previous MCQ requests with explicit topics
+    const mcqDetection = detectMcqRequest(message.content);
+    if (mcqDetection.isMcqRequest && mcqDetection.topic && !mcqDetection.isContextual) {
+      console.log(`Found previous MCQ topic from chat history: "${mcqDetection.topic}"`);
+      return mcqDetection.topic;
+    }
+
+    // Look for educational topics being discussed
+    const topicPatterns = [
+      // Academic subjects
+      /(?:studying|learning|about)\s+(.+?)(?:\s|$|\.|\?|!)/i,
+      /(?:explain|tell me about|what is)\s+(.+?)(?:\s|$|\.|\?|!)/i,
+      /(?:topic|subject|course).*?(?:is|was|about)\s+(.+?)(?:\s|$|\.|\?|!)/i,
+      // Technical topics
+      /(?:algorithm|method|concept|theory).*?(?:of|for|about)\s+(.+?)(?:\s|$|\.|\?|!)/i,
+    ];
+
+    for (const pattern of topicPatterns) {
+      const match = content.match(pattern);
+      if (match) {
+        const potentialTopic = match[1].trim();
+        // Filter out very generic or short words
+        if (potentialTopic.length > 2 && !['it', 'this', 'that', 'how', 'what', 'why'].includes(potentialTopic)) {
+          console.log(`Extracted topic from conversation: "${potentialTopic}"`);
+          return potentialTopic;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 async function generateIntelligentTitle(
@@ -373,79 +443,120 @@ export async function POST(req: Request, { params }: RouteContext) {
           let finalReply = reply;
 
           // If this is an MCQ request, generate MCQs in background and show simple link
-          if (mcqRequest.isMcqRequest && mcqRequest.topic) {
-            try {
-              // Generate context for MCQ generation
-              let mcqContext = '';
-              if (body.context?.summary) {
-                mcqContext = body.context.summary;
-              } else if (pdfChunks && pdfChunks.length > 0) {
-                mcqContext = pdfChunks.slice(0, 10).map(chunk => chunk.content).join('\n\n');
-              }
+          if (mcqRequest.isMcqRequest) {
+            let finalTopic = mcqRequest.topic;
 
-              // Determine source type
-              let sourceType: 'topic' | 'pdf' | 'youtube' = 'topic';
-              let sourceId: string | undefined;
+            // If it's a contextual request ("give me more MCQs"), extract topic from chat history
+            if (mcqRequest.isContextual || !finalTopic || finalTopic === 'general knowledge') {
+              console.log('Contextual MCQ request detected, analyzing chat history...');
 
-              if (body.context) {
-                sourceType = 'youtube';
-                sourceId = body.context.summaryId;
-              } else if (pdfChunks && pdfChunks.length > 0) {
-                sourceType = 'pdf';
-              }
+              const contextualTopic = await extractTopicFromChatHistory(history);
 
-              // Generate MCQs in background
-              const mcqQuestions = await generateMcqQuestions(
-                mcqRequest.topic,
-                mcqRequest.count || 10,
-                mcqContext
-              );
+              if (contextualTopic) {
+                finalTopic = contextualTopic;
+                console.log(`Using contextual topic: "${finalTopic}"`);
+              } else {
+                // If no context found, inform user
+                finalReply += '\n\n❓ I need more context. Could you specify what topic you\'d like MCQs on? For example: "Generate 5 MCQs on machine learning" or "Create questions about React hooks".';
 
-              if (mcqQuestions.length > 0) {
-                // Generate intelligent title based on conversation context
-                const intelligentTitle = await generateIntelligentTitle(
-                  content,
-                  body.context,
-                  pdfChunks
+                const message = await addChatMessage(
+                  thread.id,
+                  'assistant',
+                  finalReply
                 );
 
-                // Create MCQ set in database
-                const mcqSet = await createMcqSet(
-                  userId,
-                  formatSetTitle(intelligentTitle, sourceType),
-                  mcqRequest.topic,
-                  sourceType,
-                  sourceId
+                controller.enqueue(
+                  encoder.encode(streamEvent('message', { message }))
+                );
+                controller.close();
+                return;
+              }
+            }
+
+            // Proceed with MCQ generation using the final topic
+            if (finalTopic) {
+              try {
+                // Generate context for MCQ generation
+                let mcqContext = '';
+                if (body.context?.summary) {
+                  mcqContext = body.context.summary;
+                } else if (pdfChunks && pdfChunks.length > 0) {
+                  mcqContext = pdfChunks.slice(0, 10).map(chunk => chunk.content).join('\n\n');
+                }
+
+                // Determine source type
+                let sourceType: 'topic' | 'pdf' | 'youtube' = 'topic';
+                let sourceId: string | undefined;
+
+                if (body.context) {
+                  sourceType = 'youtube';
+                  sourceId = body.context.summaryId;
+                } else if (pdfChunks && pdfChunks.length > 0) {
+                  sourceType = 'pdf';
+                }
+
+                // Generate MCQs in background
+                const mcqQuestions = await generateMcqQuestions(
+                  finalTopic,
+                  mcqRequest.count || 10,
+                  mcqContext
                 );
 
-                if (mcqSet) {
-                  // Add questions to database
-                  await addMcqQuestions(
-                    mcqSet.id,
-                    mcqQuestions.map((q, index) => ({
-                      ...q,
-                      question_order: index + 1,
-                    }))
+                if (mcqQuestions.length > 0) {
+                  // Generate intelligent title based on conversation context
+                  const intelligentTitle = await generateIntelligentTitle(
+                    content,
+                    body.context,
+                    pdfChunks
                   );
 
-                  // Show simple success message with link
-                  const mcqLink = `\n\n✅ **MCQ generated!** [Go to MCQ Section →](/dashboard/mcq)`;
-                  finalReply += mcqLink;
+                  // Create or merge MCQ set intelligently
+                  const result = await createOrMergeMcqSet(
+                    userId,
+                    formatSetTitle(intelligentTitle, sourceType),
+                    finalTopic,
+                    sourceType,
+                    sourceId
+                  );
+
+                  if (result.mcqSet) {
+                    // Add questions to database (with proper ordering for merged sets)
+                    await addMcqQuestions(
+                      result.mcqSet.id,
+                      mcqQuestions.map((q) => ({
+                        ...q,
+                        // Remove question_order here - let addMcqQuestions handle auto-ordering
+                      }))
+                    );
+
+                    // Show success message with context about merge/new
+                    let successMessage = '';
+                    if (result.merged) {
+                      if (mcqRequest.isContextual) {
+                        successMessage = `\n\n✅ **Added ${mcqQuestions.length} more MCQs to existing "${result.mcqSet.title.replace(/\s*\((Video|PDF)\)$/, '')}" set!** [Go to MCQ Section →](/dashboard/mcq)`;
+                      } else {
+                        successMessage = `\n\n✅ **MCQ questions added to existing "${result.mcqSet.title.replace(/\s*\((Video|PDF)\)$/, '')}" set!** [Go to MCQ Section →](/dashboard/mcq)`;
+                      }
+                    } else {
+                      successMessage = `\n\n✅ **New MCQ set created!** [Go to MCQ Section →](/dashboard/mcq)`;
+                    }
+                    finalReply += successMessage;
+                  } else {
+                    const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
+                    finalReply += mcqLink;
+                  }
                 } else {
                   const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
                   finalReply += mcqLink;
                 }
-              } else {
+              } catch (mcqError) {
+                console.error('MCQ generation failed:', mcqError);
+                // Even if generation fails, still show link
                 const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
                 finalReply += mcqLink;
               }
-            } catch (mcqError) {
-              console.error('MCQ generation failed:', mcqError);
-              // Even if generation fails, still show link
-              const mcqLink = `\n\n🎯 **[Go to MCQ Section →](/dashboard/mcq)**`;
-              finalReply += mcqLink;
-            }
-          }
+            } // Close the if (finalTopic) block
+          } // Close the if (mcqRequest.isMcqRequest) block
 
           const assistantMessage = await addChatMessage(
             thread.id,

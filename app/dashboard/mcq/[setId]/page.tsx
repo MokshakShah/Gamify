@@ -87,17 +87,17 @@ export default function McqSetPage() {
         
         if (cachedMcqSet) {
           console.log('MCQ set loaded from cache');
-          setMcqSet(cachedMcqSet);
+          setMcqSet(cachedMcqSet as any);
           
           // Load flashcard statuses from cache
-          if (cachedMcqSet.questions) {
+          if ((cachedMcqSet as any).questions) {
             const statuses: Record<string, boolean> = {};
             
             // Try to get flashcard statuses from cache first
-            const cachePromises = cachedMcqSet.questions.map(async (question: McqQuestion) => {
+            const cachePromises = (cachedMcqSet as any).questions.map(async (question: McqQuestion) => {
               const cachedStatus = await flashcardCache.getFlashcardStatus(userId, question.id);
               if (cachedStatus !== null) {
-                statuses[question.id] = cachedStatus;
+                statuses[question.id] = Boolean(cachedStatus);
                 return true; // Found in cache
               }
               return false; // Not in cache
@@ -106,7 +106,7 @@ export default function McqSetPage() {
             const cacheResults = await Promise.all(cachePromises);
             
             // For questions not in cache, fetch from API
-            const uncachedQuestions = cachedMcqSet.questions.filter((_, index) => !cacheResults[index]);
+            const uncachedQuestions = (cachedMcqSet as any).questions.filter((_: any, index: number) => !cacheResults[index]);
             
             if (uncachedQuestions.length > 0) {
               await Promise.all(

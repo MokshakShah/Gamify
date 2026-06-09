@@ -27,7 +27,7 @@ function McqSetList({ userId }: { userId: string }) {
         
         if (cachedMcqSets) {
           console.log('MCQ sets loaded from cache');
-          setMcqSets(cachedMcqSets);
+          setMcqSets(cachedMcqSets as any);
           setLoading(false);
           return;
         }
@@ -70,8 +70,8 @@ function McqSetList({ userId }: { userId: string }) {
 
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+        {Array.from({ length: 10 }).map((_, i) => (
           <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
             <div className="h-20 bg-slate-200 rounded" />
           </div>
@@ -98,7 +98,7 @@ function McqSetList({ userId }: { userId: string }) {
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
       {mcqSets.map((set) => (
         <McqSetCard
           key={set.id}
@@ -137,6 +137,13 @@ export default function McqPage() {
         setShowForm(false);
         setTopic('');
         setCount(10);
+        
+        // Show appropriate success message
+        if (data.merged) {
+          alert(`✅ Success! Added ${data.questions?.length || count} questions to existing "${data.mcqSet.title.replace(/\s*\((Video|PDF)\)$/, '')}" set.`);
+        } else {
+          alert(`🎉 New MCQ set created! Generated ${data.questions?.length || count} questions for "${topic.trim()}".`);
+        }
         
         // Invalidate MCQ sets list cache and reload
         await mcqCache.invalidateMcqSet(userId!, 'list');
@@ -263,8 +270,8 @@ export default function McqPage() {
 
         {/* MCQ Sets Grid with Suspense */}
         <Suspense fallback={
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+            {Array.from({ length: 10 }).map((_, i) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
                 <div className="h-20 bg-slate-200 rounded" />
               </div>

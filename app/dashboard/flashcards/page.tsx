@@ -73,26 +73,25 @@ function FlashcardItem({ question, answer, explanation, setTitle, setTopic, onRe
           <h3 className="font-semibold text-slate-900 line-clamp-4 text-sm leading-relaxed">
             {question}
           </h3>
-          
+
           <div className="text-xs text-slate-600 space-y-1">
-            <p className="font-medium">{setTitle}</p>
+            <p className="font-medium">{setTitle.replace(/\s*\((Video|PDF)\)$/, '')}</p>
             <p className="text-slate-500">{setTopic}</p>
           </div>
         </div>
       </div>
 
       {/* Answer Section - Expandable */}
-      <div 
-        className={`transition-all duration-500 ease-in-out overflow-hidden ${
-          isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-        }`}
+      <div
+        className={`transition-all duration-500 ease-in-out overflow-hidden ${isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+          }`}
       >
         <div className="px-6 pb-6 space-y-4 bg-gradient-to-br from-green-50 to-emerald-50 border-t border-green-200">
           {/* Answer Revealed Header */}
           <div className="flex items-center gap-2 pt-4">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="text-xs font-medium text-green-700 uppercase tracking-wide">
-              Answer 
+              Answer
             </span>
           </div>
 
@@ -123,9 +122,9 @@ function FlashcardItem({ question, answer, explanation, setTitle, setTopic, onRe
         {!isOpen ? (
           <button
             onClick={() => setIsOpen(true)}
-            className="w-60 text-center py-3 rounded-lg bg-blue-50 border border-blue-300 hover:bg-blue-200 transition"
+            className="w-full text-center py-3 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 transition"
           >
-            <div className="flex gap-2 text-sm text-blue-600 font-medium">
+            <div className="flex items-center justify-center gap-2 text-sm text-blue-600 font-medium">
               <span>📨</span>
               <span>Click to reveal answer</span>
             </div>
@@ -133,9 +132,9 @@ function FlashcardItem({ question, answer, explanation, setTitle, setTopic, onRe
         ) : (
           <button
             onClick={() => setIsOpen(false)}
-            className="w-full text-center  rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 transition"
+            className="w-full text-center py-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 transition"
           >
-            <span className="text-xs text-slate-600 font-medium">Close Answer</span>
+            <span className="text-xs text-slate-600 font-medium">← Close Answer</span>
           </button>
         )}
       </div>
@@ -165,11 +164,11 @@ export default function FlashcardsPage() {
     try {
       // Try to get from cache first
       const cachedFlashcards = await flashcardCache.getFlashcards(userId!);
-      
+
       if (cachedFlashcards) {
         console.log('Flashcards loaded from cache');
-        setFlashcards(cachedFlashcards.flashcards || []);
-        setStats(cachedFlashcards.stats || { total: 0, addedToday: 0, addedThisWeek: 0 });
+        setFlashcards((cachedFlashcards as any).flashcards || []);
+        setStats((cachedFlashcards as any).stats || { total: 0, addedToday: 0, addedThisWeek: 0 });
         setLoading(false);
         return;
       }
@@ -181,7 +180,7 @@ export default function FlashcardsPage() {
         const data = await res.json();
         setFlashcards(data.flashcards || []);
         setStats(data.stats || { total: 0, addedToday: 0, addedThisWeek: 0 });
-        
+
         // Cache the result for future use
         await flashcardCache.setFlashcards(userId!, data);
       }
@@ -199,11 +198,11 @@ export default function FlashcardsPage() {
         // Update local state
         setFlashcards(prev => prev.filter(fc => fc.question.id !== questionId));
         setStats(prev => ({ ...prev, total: prev.total - 1 }));
-        
+
         // Update cache - invalidate flashcards list and flashcard status
         await flashcardCache.invalidateFlashcards(userId!);
         await flashcardCache.invalidateFlashcardStatus(userId!, questionId);
-        
+
         // Adjust current card if needed
         if (currentCard >= flashcards.length - 1 && currentCard > 0) {
           setCurrentCard(prev => prev - 1);
@@ -390,7 +389,7 @@ export default function FlashcardsPage() {
             <div className="mt-6 pt-4 border-t border-slate-200">
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <BookOpen className="h-4 w-4" />
-                <span>{currentFlashcard.mcq_set_title}</span>
+                <span>{currentFlashcard.mcq_set_title.replace(/\s*\((Video|PDF)\)$/, '')}</span>
                 <span>•</span>
                 <span>{currentFlashcard.mcq_set_topic}</span>
               </div>
@@ -445,7 +444,7 @@ export default function FlashcardsPage() {
       description="Review your favorite questions for quick revision."
     >
       <div className="space-y-6">
-        Stats
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="flex items-center gap-3">
@@ -499,11 +498,11 @@ export default function FlashcardsPage() {
         </div>
 
         {/* Flashcards Grid */}
-        <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:items-start">
+        <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:items-start">
           {flashcards.map((flashcard) => {
             const correctOption = flashcard.question.correct_answer;
             const correctText = flashcard.question[`option_${correctOption.toLowerCase()}` as keyof typeof flashcard.question] as string;
-            
+
             return (
               <FlashcardItem
                 key={flashcard.id}

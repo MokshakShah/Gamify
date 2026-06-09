@@ -20,7 +20,7 @@ export function ProfileSync() {
     // Run profile sync in background without blocking
     const syncProfile = async () => {
       try {
-        await upsertClerkProfile(user);
+        await upsertClerkProfile(user as any);
       } catch (error) {
         console.error('[ProfileSync] Profile sync failed:', error);
         // Allow retry on next navigation
