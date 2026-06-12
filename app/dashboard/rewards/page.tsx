@@ -1,14 +1,13 @@
 import { PanelShell } from '@/components/dashboard/PanelShell';
+import RewardsDashboard from '@/components/rewards/RewardsDashboard';
 
 export default function RewardsPage() {
   return (
     <PanelShell
       title="Rewards"
-      description="Earn XP, badges, and streak rewards for consistency."
+      description="Earn daily visit rewards and build streaks for consistency."
     >
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-        Rewards will appear here.
-      </div>
+      <RewardsDashboard />
     </PanelShell>
   );
 }

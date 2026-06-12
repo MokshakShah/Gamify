@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
+import DailyVisitTracker from "@/components/rewards/DailyVisitTracker";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -36,7 +37,11 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" className={`${inter.variable} h-full antialiased`}>
-        <body>{children}</body>
+        <body>
+          {children}
+          {/* Daily Visit Tracker - tracks visits and shows reward notifications */}
+          <DailyVisitTracker />
+        </body>
       </html>
     </ClerkProvider>
   );

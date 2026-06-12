@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gamify - AI-Powered Study Assistant
+
+A modern web application that transforms lectures, PDFs, videos, and audio content into interactive learning resources using artificial intelligence. Built with Next.js and TypeScript for optimal performance and developer experience.
+
+## Overview
+
+Gamify helps students and professionals enhance their learning experience by converting various content formats into AI-powered summaries, quizzes, flashcards, and interactive tutoring sessions. The platform integrates multiple AI services to provide comprehensive study assistance.
+
+## Features
+
+- **Multi-Format Content Processing**: Upload and process PDFs, videos, and audio files
+- **AI-Powered Summaries**: Generate intelligent summaries from various content types
+- **Interactive Quizzes**: Create custom quizzes based on your study materials
+- **Smart Flashcards**: Generate flashcards for efficient memorization
+- **YouTube Integration**: Extract and summarize content from YouTube videos
+- **Gamified Learning**: Track progress with daily visit rewards and achievements
+- **User Authentication**: Secure authentication system with Clerk
+- **Modern UI**: Responsive design with dark/light theme support
+
+## Technology Stack
+
+- **Framework**: Next.js 14 with App Router
+- **Language**: TypeScript
+- **Authentication**: Clerk
+- **Database**: Supabase with Prisma ORM
+- **AI Integration**: Groq SDK, OpenAI
+- **Styling**: Tailwind CSS
+- **UI Components**: Radix UI primitives
+- **Animations**: Framer Motion
+- **Form Handling**: React Hook Form with Zod validation
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js 18+ installed
+- npm, yarn, pnpm, or bun package manager
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repository-url>
+cd gamify
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Set up environment variables:
+```bash
+cp env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Configure your environment variables in `.env.local`:
+   - Clerk authentication keys
+   - Supabase database URL and service role key
+   - AI service API keys (Groq, Gemini)
 
-## Learn More
+5. Run database migrations:
+```bash
+npx prisma generate
+npx prisma db push
+```
 
-To learn more about Next.js, take a look at the following resources:
+### Development
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Start the development server:
+```bash
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Open [http://localhost:3000](http://localhost:3000) in your browser to see the application.
 
-## Deploy on Vercel
+## Project Structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+├── app/                    # Next.js app directory
+│   ├── api/               # API routes
+│   ├── dashboard/         # Dashboard pages
+│   ├── sign-in/           # Authentication pages
+│   └── sign-up/
+├── components/            # React components
+│   ├── dashboard/         # Dashboard-specific components
+│   ├── landing/           # Landing page components
+│   ├── rewards/           # Gamification components
+│   └── ui/                # Reusable UI components
+├── lib/                   # Utility libraries
+│   ├── auth/              # Authentication utilities
+│   ├── chat/              # Chat functionality
+│   ├── groq/              # Groq AI integration
+│   ├── pdf/               # PDF processing
+│   ├── supabase/          # Database client
+│   └── youtube/           # YouTube integration
+└── supabase/              # Database migrations
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Available Scripts
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is private and proprietary. All rights reserved.
+
+## Support
+
+For support and questions, please contact the development team or create an issue in the repository.
