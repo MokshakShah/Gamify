@@ -116,6 +116,4 @@ Open [http://localhost:3000](http://localhost:3000) in your browser to see the a
 
 This project is private and proprietary. All rights reserved.
 
-## Support
 
-For support and questions, please contact the development team or create an issue in the repository.
