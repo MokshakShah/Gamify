@@ -1,0 +1,81 @@
+/* Interactive 3D Grid - Inspired by rauno.me / SmoothUI header-4 */
+
+.gridContainer {
+  --hero-grid-hover-color-1: #3b82f6;
+  --hero-grid-hover-color-2: #60a5fa;
+  --hero-grid-hover-color-3: #2563eb;
+  --hero-grid-hover-color-4: #93c5fd;
+
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.mainGrid {
+  display: grid;
+  grid-template-columns: repeat(40, 1fr);
+  grid-template-rows: repeat(40, 1fr);
+  width: 200%;
+  height: 200%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) perspective(500px) rotateX(60deg);
+  transform-style: preserve-3d;
+  transition: transform 0.35s ease-out;
+  will-change: transform;
+}
+
+.tile {
+  aspect-ratio: 1;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: transparent;
+  position: relative;
+  /* Slow fade-out creates the cursor trail */
+  transition:
+    background-color 0.55s ease,
+    box-shadow 0.55s ease;
+}
+
+.tileActive {
+  transition-duration: 0.06s;
+}
+
+.tileActive:nth-child(4n + 1) {
+  background-color: var(--hero-grid-hover-color-1);
+  box-shadow: 0 0 16px var(--hero-grid-hover-color-1);
+}
+
+.tileActive:nth-child(4n + 2) {
+  background-color: var(--hero-grid-hover-color-2);
+  box-shadow: 0 0 16px var(--hero-grid-hover-color-2);
+}
+
+.tileActive:nth-child(4n + 3) {
+  background-color: var(--hero-grid-hover-color-3);
+  box-shadow: 0 0 16px var(--hero-grid-hover-color-3);
+}
+
+.tileActive:nth-child(4n) {
+  background-color: var(--hero-grid-hover-color-4);
+  box-shadow: 0 0 16px var(--hero-grid-hover-color-4);
+}
+
+:global(.dark) .tile {
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Softer edge fade — grid stays visible in light mode */
+.gridContainer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 35%, white 85%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+:global(.dark) .gridContainer::after {
+  background: radial-gradient(ellipse at center, transparent 35%, black 85%);
+}

@@ -2,6 +2,7 @@
 
 import { BookOpen, Menu, X } from 'lucide-react';
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   SignInButton,
@@ -9,50 +10,54 @@ import {
   SignedOut,
 } from '@clerk/nextjs';
 
+const navLinks = [
+  { href: '#features', label: 'Features' },
+  { href: '#how-it-works', label: 'How It Works' },
+  { href: '#benefits', label: 'Benefits' },
+];
+
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <nav className="fixed top-0 z-40 w-full bg-white/30 backdrop-blur-xl border-b border-gray-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          {/* Logo */}
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-500 rounded-lg flex items-center justify-center">
-              <BookOpen className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-xl font-bold text-gray-900">
-              Gamify
-            </span>
-          </div>
+    <motion.nav
+      initial={{ y: -20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ duration: 0.5, ease: 'easeOut' }}
+      className="fixed top-0 z-40 w-full"
+    >
+      {/* Glassmorphic navbar with refined blur */}
+      <div className="mx-4 mt-3 sm:mx-6 lg:mx-8 rounded-2xl bg-white/60 dark:bg-white/5 backdrop-blur-2xl border border-white/40 dark:border-white/10 shadow-lg shadow-black/[0.03] dark:shadow-black/20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="flex justify-between items-center h-14">
+            {/* Logo */}
+            <a href="/" className="flex items-center gap-2 group">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-500 rounded-lg flex items-center justify-center shadow-md shadow-blue-500/25 group-hover:shadow-lg group-hover:shadow-blue-500/30 transition-shadow">
+                <BookOpen className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-xl font-bold text-gray-900 dark:text-white">
+                Gamify
+              </span>
+            </a>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-6">
-            <a
-              href="#features"
-              className="text-gray-700 hover:text-blue-600 transition relative group"
-            >
-              Features
-              <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-gradient-to-r from-blue-600 to-blue-500 group-hover:w-full transition-all duration-300" />
-            </a>
-            <a
-              href="#how-it-works"
-              className="text-gray-700 hover:text-blue-600 transition relative group"
-            >
-              How It Works
-              <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-gradient-to-r from-blue-600 to-blue-500 group-hover:w-full transition-all duration-300" />
-            </a>
-            <a
-              href="#benefits"
-              className="text-gray-700 hover:text-blue-600 transition relative group"
-            >
-              Benefits
-              <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-gradient-to-r from-blue-600 to-blue-500 group-hover:w-full transition-all duration-300" />
-            </a>
-            <div className="flex items-center gap-2">
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center gap-1">
+              {navLinks.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className="relative px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors rounded-lg hover:bg-white/40 dark:hover:bg-white/5"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+
+            {/* Desktop Auth */}
+            <div className="hidden md:flex items-center gap-2">
               <SignedOut>
                 <SignInButton>
-                  <Button variant="glass" size="sm">
+                  <Button variant="glass" size="sm" className="text-sm">
                     Sign In
                   </Button>
                 </SignInButton>
@@ -60,73 +65,72 @@ export default function Navbar() {
               <SignedIn>
                 <a
                   href="/dashboard"
-                  className={buttonVariants({ variant: 'default', size: 'sm' })}
+                  className={buttonVariants({ variant: 'default', size: 'sm', className: 'text-sm' })}
                 >
                   Dashboard
                 </a>
               </SignedIn>
             </div>
-          </div>
 
-          {/* Mobile Menu Button */}
-          <div className="md:hidden flex items-center gap-2">
-            <button
-              className="text-gray-900 hover:text-gray-700 transition"
-              onClick={() => setIsOpen(!isOpen)}
-            >
-              {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
+            {/* Mobile Menu Button */}
+            <div className="md:hidden flex items-center">
+              <button
+                className="p-2 text-gray-900 dark:text-white hover:bg-white/40 dark:hover:bg-white/10 rounded-lg transition"
+                onClick={() => setIsOpen(!isOpen)}
+              >
+                {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Mobile Navigation */}
-        {isOpen && (
-          <div className="md:hidden pb-4 space-y-2 bg-white border-t border-gray-200">
-            <a
-              href="#features"
-              className="block text-gray-700 hover:text-blue-600 py-2 px-4 rounded transition"
-              onClick={() => setIsOpen(false)}
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              className="md:hidden overflow-hidden border-t border-white/20 dark:border-white/10"
             >
-              Features
-            </a>
-            <a
-              href="#how-it-works"
-              className="block text-gray-700 hover:text-blue-600 py-2 px-4 rounded transition"
-              onClick={() => setIsOpen(false)}
-            >
-              How It Works
-            </a>
-            <a
-              href="#benefits"
-              className="block text-gray-700 hover:text-blue-600 py-2 px-4 rounded transition"
-              onClick={() => setIsOpen(false)}
-            >
-              Benefits
-            </a>
-            <div className="px-4 pt-2">
-              <SignedOut>
-                <SignInButton>
-                  <Button variant="glass" size="sm" className="w-full">
-                    Sign In
-                  </Button>
-                </SignInButton>
-              </SignedOut>
-              <SignedIn>
-                <a
-                  href="/dashboard"
-                  className={buttonVariants({
-                    variant: 'default',
-                    size: 'sm',
-                    className: 'w-full',
-                  })}
-                >
-                  Dashboard
-                </a>
-              </SignedIn>
-            </div>
-          </div>
-        )}
+              <div className="px-4 py-3 space-y-1">
+                {navLinks.map((link) => (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    className="block text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 py-2 px-3 rounded-lg hover:bg-white/40 dark:hover:bg-white/10 transition text-sm font-medium"
+                    onClick={() => setIsOpen(false)}
+                  >
+                    {link.label}
+                  </a>
+                ))}
+                <div className="pt-2 pb-1">
+                  <SignedOut>
+                    <SignInButton>
+                      <Button variant="glass" size="sm" className="w-full text-sm">
+                        Sign In
+                      </Button>
+                    </SignInButton>
+                  </SignedOut>
+                  <SignedIn>
+                    <a
+                      href="/dashboard"
+                      className={buttonVariants({
+                        variant: 'default',
+                        size: 'sm',
+                        className: 'w-full text-sm',
+                      })}
+                    >
+                      Dashboard
+                    </a>
+                  </SignedIn>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-    </nav>
+    </motion.nav>
   );
 }

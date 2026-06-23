@@ -32,7 +32,7 @@ export default function CTA() {
         <p className="text-lg text-gray-700 dark:text-gray-200 mb-12 max-w-2xl mx-auto text-center leading-relaxed">
           Join thousands of students learning smarter. Start free today, no credit card required.
         </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <div className="flex justify-center">
           <SignedOut>
             <SignUpButton>
               <Button
@@ -54,9 +54,6 @@ export default function CTA() {
               <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition" />
             </Button>
           </SignedIn>
-          <Button size="lg" variant="glass">
-            Schedule Demo
-          </Button>
         </div>
       </motion.div>
     </section>

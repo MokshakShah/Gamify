@@ -111,10 +111,10 @@ export default function Footer() {
               <a href="#" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
                 Twitter
               </a>
-              <a href="#" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+              <a href="https://github.com/MokshakShah" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
                 GitHub
               </a>
-              <a href="#" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+              <a href="https://www.linkedin.com/in/mokshak-shah-3b73aa28b/" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
                 LinkedIn
               </a>
             </div>
