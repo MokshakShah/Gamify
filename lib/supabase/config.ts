@@ -21,7 +21,7 @@ export function getSupabaseConfigError(): string | null {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? '';
 
   if (!rawUrl || !serviceKey) {
-    return 'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local';
+    return 'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment variables';
   }
 
   if (
