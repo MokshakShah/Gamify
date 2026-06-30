@@ -1,5 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+
+import { getLocalDateKey, normalizeDateKey, uniqueVisitDates } from '@/lib/rewards/date-key';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
@@ -111,19 +113,47 @@ export async function GET() {
         totalRewards: 0,
         currentStreak: 0,
         longestStreak: 0,
-        visitedToday: false
+        visitedToday: false,
+        visitDates: [],
       });
     }
 
     // Check if user visited today
-    const today = new Date().toISOString().split('T')[0];
-    const visitedToday = profile.last_visit_date === today;
+    const today = getLocalDateKey();
+    const lastVisit = profile.last_visit_date
+      ? normalizeDateKey(String(profile.last_visit_date))
+      : null;
+    const visitedToday = lastVisit === today;
+
+    const oneYearAgo = new Date();
+    oneYearAgo.setDate(oneYearAgo.getDate() - 364);
+    const historyStart = getLocalDateKey(oneYearAgo);
+
+    const { data: visits, error: visitsError } = await supabase
+      .from('daily_visits')
+      .select('visit_date')
+      .eq('clerk_user_id', userId)
+      .gte('visit_date', historyStart)
+      .order('visit_date', { ascending: true });
+
+    if (visitsError) {
+      console.error('[Daily Visit Reward] Visit history error:', visitsError);
+    }
+
+    let visitDates = uniqueVisitDates(
+      (visits ?? []).map((row: { visit_date: string }) => row.visit_date)
+    );
+
+    if (lastVisit && !visitDates.includes(lastVisit)) {
+      visitDates = uniqueVisitDates([...visitDates, lastVisit]);
+    }
 
     return NextResponse.json({
       totalRewards: profile.total_rewards || 0,
       currentStreak: profile.current_streak || 0,
       longestStreak: profile.longest_streak || 0,
-      visitedToday
+      visitedToday,
+      visitDates,
     });
 
   } catch (error) {

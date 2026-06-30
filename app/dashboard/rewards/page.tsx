@@ -6,6 +6,7 @@ export default function RewardsPage() {
     <PanelShell
       title="Rewards"
       description="Earn daily visit rewards and build streaks for consistency."
+      unboxed
     >
       <RewardsDashboard />
     </PanelShell>

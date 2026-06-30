@@ -134,6 +134,13 @@ export async function POST(req: Request) {
     const transcript = await fetchYoutubeTranscript(parsed.videoId);
 
     if (!transcript) {
+      const proxyConfigured = Boolean(
+        process.env.YOUTUBE_TRANSCRIPT_PROXY_URL?.trim()
+      );
+      const declineMessage = proxyConfigured
+        ? 'No captions/transcript available for this video. Summaries require an accessible YouTube transcript.'
+        : 'No captions/transcript available for this video. YouTube often blocks transcript requests from cloud servers (Vercel). Add YOUTUBE_TRANSCRIPT_PROXY_URL in Vercel env, or confirm this video has public captions.';
+
       const declined = await upsertYoutubeSummary({
         clerk_user_id: userId,
         video_id: parsed.videoId,
@@ -143,13 +150,12 @@ export async function POST(req: Request) {
         status: 'declined_no_transcript',
         transcript_available: false,
         summary: null,
-        error_message:
-          'No captions/transcript available for this video. Summaries require an accessible YouTube transcript.',
+        error_message: declineMessage,
       });
 
       return NextResponse.json(
         {
-          error: declined.error_message,
+          error: declineMessage,
           item: toClient(declined),
         },
         { status: 422 }
