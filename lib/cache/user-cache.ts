@@ -18,10 +18,19 @@ class UserCacheManager {
     private dbName = 'gamify_cache';
     private dbVersion = 1;
     private db: IDBDatabase | null = null;
+    // Promise that resolves when DB is ready — prevents race conditions
+    private dbReady: Promise<void>;
+    private dbReadyResolve!: () => void;
 
     constructor() {
+        this.dbReady = new Promise((resolve) => {
+            this.dbReadyResolve = resolve;
+        });
         if (typeof window !== 'undefined') {
             this.initDB();
+        } else {
+            // SSR — resolve immediately so awaits don't hang
+            this.dbReadyResolve();
         }
     }
 
@@ -29,16 +38,19 @@ class UserCacheManager {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(this.dbName, this.dbVersion);
 
-            request.onerror = () => reject(request.error);
+            request.onerror = () => {
+                this.dbReadyResolve(); // resolve anyway so the app doesn't hang
+                reject(request.error);
+            };
             request.onsuccess = () => {
                 this.db = request.result;
+                this.dbReadyResolve();
                 resolve();
             };
 
             request.onupgradeneeded = (event) => {
                 const db = (event.target as IDBOpenDBRequest).result;
 
-                // Create stores for different data types
                 if (!db.objectStoreNames.contains('mcq_sets')) {
                     db.createObjectStore('mcq_sets', { keyPath: 'key' });
                 }
@@ -58,6 +70,12 @@ class UserCacheManager {
 
     private isExpired(item: CacheItem<any>): boolean {
         return Date.now() > item.expiresAt;
+    }
+
+    private storeName(type: string): string {
+        if (type === 'mcq_sets') return 'mcq_sets';
+        if (type === 'flashcards') return 'flashcards';
+        return 'flashcard_status';
     }
 
     private async getFromIndexedDB<T>(storeName: string, key: string): Promise<CacheItem<T> | null> {
@@ -97,28 +115,28 @@ class UserCacheManager {
     ): Promise<T | null> {
         const key = this.generateKey(userId, type, id);
 
-        // Try memory cache first
-        let item = this.memoryCache.get(key);
+        // 1. Try memory cache — always instant
+        const memItem = this.memoryCache.get(key);
+        if (memItem && !this.isExpired(memItem) && memItem.userId === userId) {
+            return memItem.data;
+        }
 
-        // If not in memory and persistent option is enabled, try IndexedDB
-        if (!item && options.persistent) {
-            const storeName = type === 'mcq_sets' ? 'mcq_sets' :
-                type === 'flashcards' ? 'flashcards' : 'flashcard_status';
-            item = (await this.getFromIndexedDB<T>(storeName, key)) || undefined;
+        // 2. Wait for DB to be ready before attempting IndexedDB read
+        if (options.persistent) {
+            await this.dbReady;
+            const store = this.storeName(type);
+            const dbItem = await this.getFromIndexedDB<T>(store, key);
 
-            // If found in IndexedDB, put it in memory cache for faster access
-            if (item) {
-                this.memoryCache.set(key, item);
+            if (dbItem && !this.isExpired(dbItem) && dbItem.userId === userId) {
+                // Warm the memory cache so subsequent reads are instant
+                this.memoryCache.set(key, dbItem);
+                return dbItem.data;
             }
         }
 
-        if (!item || this.isExpired(item) || item.userId !== userId) {
-            // Clean up expired or invalid items
-            this.memoryCache.delete(key);
-            return null;
-        }
-
-        return item.data;
+        // Clean up stale memory entry
+        this.memoryCache.delete(key);
+        return null;
     }
 
     async set<T>(
@@ -129,7 +147,7 @@ class UserCacheManager {
         id?: string
     ): Promise<void> {
         const key = this.generateKey(userId, type, id);
-        const ttl = options.ttl || 5 * 60 * 1000; // Default 5 minutes
+        const ttl = options.ttl || 5 * 60 * 1000;
 
         const item: CacheItem<T> = {
             data,
@@ -138,82 +156,67 @@ class UserCacheManager {
             expiresAt: Date.now() + ttl,
         };
 
-        // Always set in memory cache
+        // Always write to memory cache immediately
         this.memoryCache.set(key, item);
 
-        // If persistent option is enabled, also set in IndexedDB
+        // Persist to IndexedDB in background (don't await — keeps UI fast)
         if (options.persistent) {
-            const storeName = type === 'mcq_sets' ? 'mcq_sets' :
-                type === 'flashcards' ? 'flashcards' : 'flashcard_status';
-            await this.setToIndexedDB(storeName, key, item);
+            this.dbReady.then(() => {
+                const store = this.storeName(type);
+                this.setToIndexedDB(store, key, item).catch(() => {
+                    // IndexedDB write failure is non-fatal
+                });
+            });
         }
     }
 
     async invalidate(userId: string, type: string, id?: string): Promise<void> {
         const key = this.generateKey(userId, type, id);
 
-        // Remove from memory cache
         this.memoryCache.delete(key);
 
-        // Remove from IndexedDB if it exists
         if (this.db) {
-            const storeName = type === 'mcq_sets' ? 'mcq_sets' :
-                type === 'flashcards' ? 'flashcards' : 'flashcard_status';
-
+            const store = this.storeName(type);
             try {
-                const transaction = this.db.transaction([storeName], 'readwrite');
-                const store = transaction.objectStore(storeName);
-                store.delete(key);
-            } catch (error) {
-                console.error('Failed to delete from IndexedDB:', error);
+                const transaction = this.db.transaction([store], 'readwrite');
+                transaction.objectStore(store).delete(key);
+            } catch {
+                // Non-fatal
             }
         }
     }
 
     async clearUserCache(userId: string): Promise<void> {
-        // Clear memory cache for user
         for (const [key, item] of this.memoryCache.entries()) {
             if (item.userId === userId) {
                 this.memoryCache.delete(key);
             }
         }
 
-        // Clear IndexedDB for user
         if (this.db) {
             const storeNames = ['mcq_sets', 'flashcards', 'flashcard_status'];
-
             for (const storeName of storeNames) {
                 try {
                     const transaction = this.db.transaction([storeName], 'readwrite');
                     const store = transaction.objectStore(storeName);
                     const request = store.openCursor();
-
                     request.onsuccess = (event) => {
                         const cursor = (event.target as IDBRequest).result;
                         if (cursor) {
-                            const item = cursor.value;
-                            if (item.userId === userId) {
-                                cursor.delete();
-                            }
+                            if (cursor.value.userId === userId) cursor.delete();
                             cursor.continue();
                         }
                     };
-                } catch (error) {
-                    console.error(`Failed to clear ${storeName} for user:`, error);
+                } catch {
+                    // Non-fatal
                 }
             }
         }
     }
 
-    // Clean up expired items periodically
     cleanup(): void {
-        const now = Date.now();
-
-        // Clean memory cache
         for (const [key, item] of this.memoryCache.entries()) {
-            if (this.isExpired(item)) {
-                this.memoryCache.delete(key);
-            }
+            if (this.isExpired(item)) this.memoryCache.delete(key);
         }
     }
 }
@@ -221,20 +224,21 @@ class UserCacheManager {
 // Singleton instance
 const userCache = new UserCacheManager();
 
-// Clean up expired items every 5 minutes
 if (typeof window !== 'undefined') {
     setInterval(() => userCache.cleanup(), 5 * 60 * 1000);
 }
 
 export default userCache;
 
-// Helper functions for specific data types
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 export const mcqCache = {
+    // 30 min TTL — sets don't change often
     getMcqSet: (userId: string, setId: string) =>
-        userCache.get(userId, 'mcq_sets', setId, { persistent: true, ttl: 15 * 60 * 1000 }),
+        userCache.get(userId, 'mcq_sets', setId, { persistent: true, ttl: 30 * 60 * 1000 }),
 
     setMcqSet: (userId: string, setId: string, data: any) =>
-        userCache.set(userId, 'mcq_sets', data, { persistent: true, ttl: 15 * 60 * 1000 }, setId),
+        userCache.set(userId, 'mcq_sets', data, { persistent: true, ttl: 30 * 60 * 1000 }, setId),
 
     invalidateMcqSet: (userId: string, setId: string) =>
         userCache.invalidate(userId, 'mcq_sets', setId),

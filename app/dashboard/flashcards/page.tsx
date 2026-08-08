@@ -44,101 +44,174 @@ type FlashcardItemProps = {
 };
 
 function FlashcardItem({ question, answer, explanation, setTitle, setTopic, onRemove }: FlashcardItemProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Lock body scroll when any overlay is open
+  useEffect(() => {
+    if (modalOpen || confirmDelete) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [modalOpen, confirmDelete]);
 
   return (
-    <div className="relative group rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md overflow-hidden">
-      {/* Question - Always Visible */}
-      <div className="p-6">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Star className="h-4 w-4 text-yellow-500 fill-current" />
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-              Flashcard
-            </span>
+    <>
+      {/* ── Card (never changes size) ── */}
+      <div className="relative group flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md overflow-hidden">
+        <div className="flex flex-col flex-1 p-5">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <Star className="h-3.5 w-3.5 text-yellow-500 fill-current" />
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Flashcard</span>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+              className="opacity-0 group-hover:opacity-100 transition p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
+              title="Remove"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
           </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="opacity-0 group-hover:opacity-100 transition p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
-            title="Remove from flashcards"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        </div>
 
-        <div className="space-y-3">
-          <h3 className="font-semibold text-slate-900 line-clamp-4 text-sm leading-relaxed">
+          {/* Question — fixed height so grid rows align */}
+          <p className="flex-1 text-sm font-semibold text-slate-800 leading-relaxed min-h-[4.5rem]">
             {question}
-          </h3>
+          </p>
 
-          <div className="text-xs text-slate-600 space-y-1">
-            <p className="font-medium">{setTitle.replace(/\s*\((Video|PDF)\)$/, '')}</p>
-            <p className="text-slate-500">{setTopic}</p>
+          {/* Source */}
+          <div className="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500 space-y-0.5">
+            <p className="font-medium text-slate-600 truncate">{setTitle.replace(/\s*\((Video|PDF)\)$/, '')}</p>
+            <p className="truncate">{setTopic}</p>
           </div>
+        </div>
+
+        {/* Reveal button — always at bottom */}
+        <div className="px-5 pb-5">
+          <button
+            onClick={() => setModalOpen(true)}
+            className="w-full py-2.5 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 active:scale-95 transition-all text-sm font-medium text-blue-600 flex items-center justify-center gap-2"
+          >
+            <span>💡</span> Reveal Answer
+          </button>
         </div>
       </div>
 
-      {/* Answer Section - Expandable */}
-      <div
-        className={`transition-all duration-500 ease-in-out overflow-hidden ${isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-          }`}
-      >
-        <div className="px-6 pb-6 space-y-4 bg-gradient-to-br from-green-50 to-emerald-50 border-t border-green-200">
-          {/* Answer Revealed Header */}
-          <div className="flex items-center gap-2 pt-4">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-xs font-medium text-green-700 uppercase tracking-wide">
-              Answer
-            </span>
-          </div>
+      {/* ── Modal overlay ── */}
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setModalOpen(false)}
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
 
-          {/* Correct Answer */}
-          <div className="bg-white rounded-lg p-4 border-l-4 border-green-400 shadow-sm">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center">
-                <span className="text-green-700 font-bold text-xs">✓</span>
+          {/* Panel */}
+          <div
+            className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-start justify-between p-6 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Star className="h-4 w-4 text-yellow-500 fill-current" />
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Flashcard</span>
               </div>
-              <span className="text-sm font-semibold text-green-800">Correct Answer</span>
+              <button
+                onClick={() => setModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <p className="text-sm text-slate-900 font-medium leading-relaxed">{answer}</p>
-          </div>
 
-          {/* Explanation */}
-          <div className="bg-white rounded-lg p-4 border-l-4 border-blue-400 shadow-sm">
-            <h4 className="text-xs font-semibold text-blue-900 mb-2 uppercase tracking-wide flex items-center gap-1">
-              <span>💡</span>
-              <span>Explanation</span>
-            </h4>
-            <p className="text-xs text-slate-700 leading-relaxed">{explanation}</p>
+            <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+              {/* Question */}
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Question</p>
+                <p className="text-base font-semibold text-slate-900 leading-relaxed">{question}</p>
+              </div>
+
+              {/* Correct Answer */}
+              <div className="rounded-xl bg-green-50 border border-green-200 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-500 text-white text-xs font-bold">✓</span>
+                  <span className="text-sm font-semibold text-green-800">Correct Answer</span>
+                </div>
+                <p className="text-sm text-slate-900 font-medium leading-relaxed">{answer}</p>
+              </div>
+
+              {/* Explanation */}
+              <div className="rounded-xl bg-blue-50 border border-blue-200 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">💡</span>
+                  <span className="text-sm font-semibold text-blue-800">Explanation</span>
+                </div>
+                <p className="text-sm text-slate-700 leading-relaxed">{explanation}</p>
+              </div>
+
+              {/* Source */}
+              <p className="text-xs text-slate-400">
+                {setTitle.replace(/\s*\((Video|PDF)\)$/, '')} · {setTopic}
+              </p>
+            </div>
+
+            {/* Modal footer */}
+            <div className="px-6 py-4 border-t border-slate-100">
+              <button
+                onClick={() => setModalOpen(false)}
+                className="w-full py-2.5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 active:scale-95 transition-all"
+              >
+                Got it
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Toggle Button */}
-      <div className="px-6 pb-6">
-        {!isOpen ? (
-          <button
-            onClick={() => setIsOpen(true)}
-            className="w-full text-center py-3 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 transition"
+      {/* ── Delete confirmation dialog ── */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setConfirmDelete(false)}
+        >
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-center gap-2 text-sm text-blue-600 font-medium">
-              <span>📨</span>
-              <span>Click to reveal answer</span>
+            <div className="flex items-center gap-3 mb-3">
+              <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-red-100">
+                <Trash2 className="h-4 w-4 text-red-600" />
+              </span>
+              <h3 className="text-sm font-semibold text-slate-900">Remove flashcard?</h3>
             </div>
-          </button>
-        ) : (
-          <button
-            onClick={() => setIsOpen(false)}
-            className="w-full text-center py-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 transition"
-          >
-            <span className="text-xs text-slate-600 font-medium">← Close Answer</span>
-          </button>
-        )}
-      </div>
-    </div>
+            <p className="text-sm text-slate-500 mb-5 pl-12">
+              This will remove the card from your flashcard collection. You can always re-add it from the MCQ section.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setConfirmDelete(false); onRemove(); }}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 transition"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -444,45 +517,6 @@ export default function FlashcardsPage() {
       description="Review your favorite questions for quick revision."
     >
       <div className="space-y-6">
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-100">
-                <Star className="h-5 w-5 text-blue-600 fill-current" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold text-slate-900">{stats.total}</p>
-                <p className="text-sm text-slate-600">Total Flashcards</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-100">
-                <Calendar className="h-5 w-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold text-slate-900">{stats.addedToday}</p>
-                <p className="text-sm text-slate-600">Added Today</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-100">
-                <BookOpen className="h-5 w-5 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold text-slate-900">{stats.addedThisWeek}</p>
-                <p className="text-sm text-slate-600">This Week</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Study Mode Button */}
         <div className="flex justify-between items-center">
           <h2 className="text-lg font-semibold text-slate-900">Your Flashcards</h2>
@@ -498,7 +532,7 @@ export default function FlashcardsPage() {
         </div>
 
         {/* Flashcards Grid */}
-        <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:items-start">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-stretch">
           {flashcards.map((flashcard) => {
             const correctOption = flashcard.question.correct_answer;
             const correctText = flashcard.question[`option_${correctOption.toLowerCase()}` as keyof typeof flashcard.question] as string;

@@ -54,10 +54,8 @@ export default function McqSetPage() {
   const [selectedAnswer, setSelectedAnswer] = useState<string>('');
   const [showResults, setShowResults] = useState(isResultsMode);
   const [quizCompleted, setQuizCompleted] = useState(isResultsMode);
-  const [showExplanation, setShowExplanation] = useState(false);
   const [currentQuestionAnswered, setCurrentQuestionAnswered] = useState(false);
   const [flashcardStatuses, setFlashcardStatuses] = useState<Record<string, boolean>>({});
-  const [loadingFlashcard, setLoadingFlashcard] = useState<string | null>(null);
 
   // Restore answers from URL if available
   useEffect(() => {
@@ -218,19 +216,11 @@ export default function McqSetPage() {
   const handleAnswerSelect = (answer: 'A' | 'B' | 'C' | 'D') => {
     setSelectedAnswer(answer);
     setCurrentQuestionAnswered(false);
-    setShowExplanation(false);
   };
 
   const handleSubmitAnswer = () => {
     if (!selectedAnswer) return;
-    
-    const isCorrect = selectedAnswer === currentQ.correct_answer;
     setCurrentQuestionAnswered(true);
-    
-    // Only show explanation immediately if answer is wrong
-    if (!isCorrect) {
-      setShowExplanation(true);
-    }
   };
 
   const handleNext = () => {
@@ -246,7 +236,6 @@ export default function McqSetPage() {
       setAnswers(updatedAnswers);
       setSelectedAnswer('');
       setCurrentQuestionAnswered(false);
-      setShowExplanation(false);
 
       if (currentQuestion + 1 < mcqSet.questions.length) {
         setCurrentQuestion(prev => prev + 1);
@@ -269,49 +258,36 @@ export default function McqSetPage() {
     setShowExplanation(true);
   };
 
-  const toggleFlashcard = async (questionId: string) => {
-    if (loadingFlashcard === questionId) return;
-    
-    setLoadingFlashcard(questionId);
+  const toggleFlashcard = (questionId: string) => {
     const isCurrentlyInFlashcards = flashcardStatuses[questionId] || false;
-    
-    try {
-      const method = isCurrentlyInFlashcards ? 'DELETE' : 'POST';
-      const res = await fetch(`/api/flashcards/${questionId}`, { method });
-      
-      if (res.ok) {
-        const newStatus = !isCurrentlyInFlashcards;
-        
-        // Update local state
-        setFlashcardStatuses(prev => ({
-          ...prev,
-          [questionId]: newStatus
-        }));
-        
-        // Update cache
-        await flashcardCache.setFlashcardStatus(userId!, questionId, newStatus);
-        
-        // Invalidate flashcards list cache to refresh counts/lists
-        await flashcardCache.invalidateFlashcards(userId!);
-      } else {
-        console.error('Failed to toggle flashcard');
-      }
-    } catch (error) {
-      console.error('Failed to toggle flashcard:', error);
-    } finally {
-      setLoadingFlashcard(null);
-    }
+    const newStatus = !isCurrentlyInFlashcards;
+
+    // Optimistic update — UI changes instantly
+    setFlashcardStatuses(prev => ({ ...prev, [questionId]: newStatus }));
+
+    // Fire API in background
+    const method = isCurrentlyInFlashcards ? 'DELETE' : 'POST';
+    fetch(`/api/flashcards/${questionId}`, { method })
+      .then(res => {
+        if (!res.ok) throw new Error('Failed');
+        // Sync caches quietly
+        flashcardCache.setFlashcardStatus(userId!, questionId, newStatus);
+        flashcardCache.invalidateFlashcards(userId!);
+      })
+      .catch(() => {
+        // Revert on failure
+        setFlashcardStatuses(prev => ({ ...prev, [questionId]: isCurrentlyInFlashcards }));
+        console.error('Failed to toggle flashcard, reverted');
+      });
   };
 
   const restartQuiz = () => {
-    // Clear URL parameters and reset state
     router.replace(`/dashboard/mcq/${setId}`);
     setCurrentQuestion(0);
     setAnswers([]);
     setSelectedAnswer('');
     setShowResults(false);
     setQuizCompleted(false);
-    setShowExplanation(false);
     setCurrentQuestionAnswered(false);
   };
 
@@ -366,12 +342,11 @@ export default function McqSetPage() {
                         <p className="font-medium text-slate-900 flex-1">{question.question}</p>
                         <button
                           onClick={() => toggleFlashcard(question.id)}
-                          disabled={loadingFlashcard === question.id}
-                          className={`flex-shrink-0 ml-4 p-1.5 rounded-lg transition ${
+                          className={`flex-shrink-0 ml-4 p-1.5 rounded-lg transition active:scale-90 ${
                             flashcardStatuses[question.id]
-                              ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                              ? 'bg-yellow-100 text-yellow-500 hover:bg-yellow-200'
                               : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
-                          } ${loadingFlashcard === question.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          }`}
                           title={flashcardStatuses[question.id] ? 'Remove from flashcards' : 'Add to flashcards'}
                         >
                           {flashcardStatuses[question.id] ? (
@@ -457,12 +432,11 @@ export default function McqSetPage() {
             </h2>
             <button
               onClick={() => toggleFlashcard(currentQ.id)}
-              disabled={loadingFlashcard === currentQ.id}
-              className={`flex-shrink-0 ml-4 p-2 rounded-lg transition ${
+              className={`flex-shrink-0 ml-4 p-2 rounded-lg transition active:scale-90 ${
                 flashcardStatuses[currentQ.id]
-                  ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                  ? 'bg-yellow-100 text-yellow-500 hover:bg-yellow-200'
                   : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
-              } ${loadingFlashcard === currentQ.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+              }`}
               title={flashcardStatuses[currentQ.id] ? 'Remove from flashcards' : 'Add to flashcards'}
             >
               {flashcardStatuses[currentQ.id] ? (
@@ -479,69 +453,81 @@ export default function McqSetPage() {
               { key: 'B', text: currentQ.option_b },
               { key: 'C', text: currentQ.option_c },
               { key: 'D', text: currentQ.option_d },
-            ].map((option) => (
-              <label
-                key={option.key}
-                className={`block cursor-pointer rounded-lg border-2 p-4 transition ${
-                  selectedAnswer === option.key
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="answer"
-                  value={option.key}
-                  checked={selectedAnswer === option.key}
-                  onChange={(e) => handleAnswerSelect(e.target.value as 'A' | 'B' | 'C' | 'D')}
-                  className="sr-only"
-                />
-                <div className="flex items-start gap-3">
-                  <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center text-sm font-semibold ${
-                    selectedAnswer === option.key
-                      ? 'border-blue-500 bg-blue-500 text-white'
-                      : 'border-slate-300 text-slate-600'
-                  }`}>
-                    {option.key}
+            ].map((option) => {
+              const isCorrect = option.key === currentQ.correct_answer;
+              const isSelected = selectedAnswer === option.key;
+              const answered = currentQuestionAnswered;
+
+              let containerClass = '';
+              let badgeClass = '';
+
+              if (!answered) {
+                containerClass = isSelected
+                  ? 'border-blue-500 bg-blue-50 cursor-pointer'
+                  : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 cursor-pointer';
+                badgeClass = isSelected
+                  ? 'border-blue-500 bg-blue-500 text-white'
+                  : 'border-slate-300 text-slate-600';
+              } else {
+                if (isCorrect) {
+                  containerClass = 'border-green-500 bg-green-50 cursor-default';
+                  badgeClass = 'border-green-500 bg-green-500 text-white';
+                } else if (isSelected) {
+                  containerClass = 'border-red-400 bg-red-50 cursor-default';
+                  badgeClass = 'border-red-400 bg-red-400 text-white';
+                } else {
+                  containerClass = 'border-slate-200 bg-slate-50 opacity-50 cursor-default';
+                  badgeClass = 'border-slate-300 text-slate-400';
+                }
+              }
+
+              return (
+                <label key={option.key} className={`block rounded-lg border-2 p-4 transition-colors ${containerClass}`}>
+                  <input
+                    type="radio"
+                    name="answer"
+                    value={option.key}
+                    checked={isSelected}
+                    onChange={(e) => !answered && handleAnswerSelect(e.target.value as 'A' | 'B' | 'C' | 'D')}
+                    disabled={answered}
+                    className="sr-only"
+                  />
+                  <div className="flex items-center gap-3">
+                    <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center text-sm font-semibold ${badgeClass}`}>
+                      {answered && isCorrect ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : answered && isSelected && !isCorrect ? (
+                        <XCircle className="h-3.5 w-3.5" />
+                      ) : (
+                        option.key
+                      )}
+                    </div>
+                    <span className={`flex-1 text-sm ${
+                      answered && isCorrect
+                        ? 'font-semibold text-green-800'
+                        : answered && isSelected && !isCorrect
+                        ? 'font-medium text-red-700'
+                        : 'text-slate-800'
+                    }`}>
+                      {option.text}
+                    </span>
+                    {answered && isCorrect && (
+                      <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Correct</span>
+                    )}
+                    {answered && isSelected && !isCorrect && (
+                      <span className="text-xs font-semibold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">Your answer</span>
+                    )}
                   </div>
-                  <span className="text-slate-900">{option.text}</span>
-                </div>
-              </label>
-            ))}
+                </label>
+              );
+            })}
           </div>
-          {/* Show feedback after answering */}
+
+          {/* Explanation — always shown after answering */}
           {currentQuestionAnswered && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              {selectedAnswer === currentQ.correct_answer ? (
-                <div className="flex items-center gap-2 text-green-700">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span className="font-medium">Correct!</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-red-700">
-                  <XCircle className="h-5 w-5" />
-                  <span className="font-medium">Incorrect. The correct answer is {currentQ.correct_answer}.</span>
-                </div>
-              )}
-              
-              {/* Show explanation if wrong or if user clicks show */}
-              {showExplanation && (
-                <div className="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
-                  <p className="text-sm text-blue-900">
-                    <strong>Explanation:</strong> {currentQ.explanation}
-                  </p>
-                </div>
-              )}
-              
-              {/* Show explanation button if correct and not shown yet */}
-              {selectedAnswer === currentQ.correct_answer && !showExplanation && (
-                <button
-                  onClick={handleShowExplanation}
-                  className="mt-3 text-sm text-blue-600 hover:text-blue-700 underline"
-                >
-                  Show explanation
-                </button>
-              )}
+            <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-4">
+              <p className="text-sm font-semibold text-blue-800 mb-1">💡 Explanation</p>
+              <p className="text-sm text-slate-700 leading-relaxed">{currentQ.explanation}</p>
             </div>
           )}
         </div>

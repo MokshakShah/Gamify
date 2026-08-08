@@ -306,6 +306,33 @@ export async function updateMcqSetTitle(
   return data;
 }
 
+export async function updateMcqSetTopic(
+  clerkUserId: string,
+  setId: string,
+  newTopic: string
+): Promise<McqSet | null> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('mcq_sets')
+    .update({
+      topic: newTopic,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', setId)
+    .eq('clerk_user_id', clerkUserId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[supabase] updateMcqSetTopic failed:', error);
+    return null;
+  }
+
+  return data;
+}
+
 export async function deleteMcqSet(
   clerkUserId: string,
   setId: string

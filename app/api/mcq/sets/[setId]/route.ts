@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
-import { getMcqSetWithQuestions, deleteMcqSet, updateMcqSetTitle } from '@/lib/supabase/mcq';
+import { getMcqSetWithQuestions, deleteMcqSet, updateMcqSetTitle, updateMcqSetTopic } from '@/lib/supabase/mcq';
 import { cacheHelpers } from '@/lib/cache/api-cache';
 
 export const dynamic = 'force-dynamic';
@@ -54,8 +54,26 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
   try {
     const body = await req.json();
-    const { title } = body;
+    const { title, topic } = body;
 
+    // Update topic if provided
+    if (topic !== undefined) {
+      if (typeof topic !== 'string' || topic.trim().length === 0) {
+        return NextResponse.json({ error: 'Topic must be a non-empty string' }, { status: 400 });
+      }
+      if (topic.trim().length > 100) {
+        return NextResponse.json({ error: 'Topic must be 100 characters or less' }, { status: 400 });
+      }
+      const updatedSet = await updateMcqSetTopic(userId, setId, topic.trim());
+      if (!updatedSet) {
+        return NextResponse.json({ error: 'MCQ set not found or update failed' }, { status: 404 });
+      }
+      cacheHelpers.invalidateMcqSet(userId, setId);
+      cacheHelpers.invalidateMcqSets(userId);
+      return NextResponse.json({ mcqSet: updatedSet });
+    }
+
+    // Update title if provided
     if (!title || typeof title !== 'string' || title.trim().length === 0) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
     }

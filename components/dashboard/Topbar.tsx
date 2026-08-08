@@ -8,7 +8,6 @@ import {
   BookOpen,
   FileQuestion,
   Layers,
-  LayoutDashboard,
   MessageSquare,
   Trophy,
   Upload,
@@ -16,7 +15,6 @@ import {
 import { cn } from '@/lib/utils';
 
 const navItems = [
-  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/dashboard/upload', label: 'Upload', icon: Upload },
   { href: '/dashboard/mcq', label: 'MCQ', icon: FileQuestion },
   { href: '/dashboard/flashcards', label: 'Flashcards', icon: Layers },

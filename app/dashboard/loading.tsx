@@ -1,10 +1,13 @@
 export default function DashboardLoading() {
   return (
-    <div className="flex h-full items-center justify-center">
-      <div className="flex items-center gap-3">
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-        <span className="text-sm text-slate-600">Loading dashboard...</span>
-      </div>
+    <div className="grid gap-4 md:grid-cols-2">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+          <div className="h-3 w-28 rounded bg-slate-200 animate-pulse" />
+          <div className="h-7 w-16 rounded bg-slate-300 animate-pulse" />
+          <div className="h-3 w-40 rounded bg-slate-200 animate-pulse" />
+        </div>
+      ))}
     </div>
   );
 }

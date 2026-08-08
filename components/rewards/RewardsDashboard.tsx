@@ -15,6 +15,29 @@ type RewardStats = {
   visitDates: string[];
 };
 
+// Cache key includes userId and today's date so it resets automatically each day
+function getCacheKey(userId: string) {
+  const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  return `rewards_cache_${userId}_${today}`;
+}
+
+function readCache(userId: string): RewardStats | null {
+  try {
+    const raw = localStorage.getItem(getCacheKey(userId));
+    return raw ? (JSON.parse(raw) as RewardStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(userId: string, stats: RewardStats) {
+  try {
+    localStorage.setItem(getCacheKey(userId), JSON.stringify(stats));
+  } catch {
+    // localStorage unavailable (e.g. private mode quota) — just skip caching
+  }
+}
+
 export default function RewardsDashboard() {
   const { userId, isSignedIn } = useAuth();
   const [rewardStats, setRewardStats] = useState<RewardStats | null>(null);
@@ -26,15 +49,22 @@ export default function RewardsDashboard() {
       return;
     }
 
+    // Return cached data for the day — no API call needed
+    const cached = readCache(userId);
+    if (cached) {
+      setRewardStats(cached);
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch('/api/rewards/daily-visit');
 
       if (response.ok) {
         const stats: RewardStats = await response.json();
-        setRewardStats({
-          ...stats,
-          visitDates: stats.visitDates ?? [],
-        });
+        const normalized: RewardStats = { ...stats, visitDates: stats.visitDates ?? [] };
+        setRewardStats(normalized);
+        writeCache(userId, normalized);
       } else {
         console.error('Failed to fetch reward stats:', response.status);
       }

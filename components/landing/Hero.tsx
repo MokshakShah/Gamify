@@ -22,7 +22,7 @@ import { useRouter } from 'next/navigation';
 import styles from './hero-grid.module.css';
 
 // ─── Interactive 3D Grid Background ────────────────────────────────────────────
-const GRID_SIZE = 40;
+const GRID_SIZE = 20; // Reduced from 40 (1600 tiles → 400 tiles)
 const TOTAL_TILES = GRID_SIZE * GRID_SIZE;
 const BASE_TRANSFORM = 'translate(-50%, -50%) perspective(500px) rotateX(60deg)';
 
